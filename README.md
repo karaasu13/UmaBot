@@ -28,6 +28,7 @@
 | 🖥️ **Any resolution** | Windowed or fullscreen, any size, any monitor. It measures the game's scale by itself. |
 | 🖱️ **Clicks like a person** | A different spot on every button, curved mouse paths, natural reaction times and the odd short pause. |
 | 🌙 **Normal hours** | Plays in a daily window that shifts a little every day, with random breaks. No TP is ever wasted. |
+| 🏁 **Today at a glance** | Your day drawn as a race track: start gate, finish post, hatched breaks and a dot for *now*. |
 | 🛡️ **Safe by default** | Never spends carats or items, and stops on its own if something looks off. |
 | 👀 **No game hacking** | It only looks at the screen and moves the mouse. No API calls, no memory reading, no modified files. |
 
@@ -39,7 +40,8 @@
 4. **Open Umamusume**, go to the home screen and press **▶ Start**.
 
 That's it. Leave the game window visible (not minimised, nothing on top of it) and keep the PC from sleeping.
-You can follow everything in **Activity**, and the **Schedule** panel shows when it will play today.
+You can follow everything in **Activity**, and the track shows when it will play today. **F8** starts and stops,
+and the switch at the top changes between dark and light mode.
 
 ## ⚙️ How it works
 
@@ -144,7 +146,7 @@ in `settings.json`.
 
 ```
 umabot/
-  gui.py       the app (customtkinter)
+  gui.py       the app (customtkinter, dark and light themes)
   engine.py    rule engine and main loop
   vision.py    game window, screenshots, UI-scale detection, template matching
   human.py     human-like clicks, mouse paths and timings
@@ -152,7 +154,7 @@ umabot/
   tools.py     support card, test, check, crop
 config.toml    settings and rules
 templates/     button pictures
-assets/        icon, banner, screenshot
+assets/        icon, banner, screenshot, fonts
 ```
 
 Every push to `main` runs the tests, builds `UmaBot.exe` and publishes it to the
@@ -164,4 +166,5 @@ Every push to `main` runs the tests, builds `UmaBot.exe` and publishes it to the
 UmaBot is a fan-made tool, not affiliated with or endorsed by Cygames. Umamusume: Pretty Derby is © Cygames, Inc.
 Automating the game goes against its Terms of Use: use it at your own risk.
 Fallback button pictures come from [umamusume-auto-train](https://github.com/samsulpanjul/umamusume-auto-train), and card
-pictures from [GameTora](https://gametora.com/umamusume).
+pictures from [GameTora](https://gametora.com/umamusume). The app uses the [Barlow](https://github.com/jpt/barlow) typeface
+(SIL Open Font License, see [`assets/fonts/OFL.txt`](assets/fonts/OFL.txt)).

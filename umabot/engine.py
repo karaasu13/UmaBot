@@ -69,6 +69,7 @@ class Bot:
         self.logs_dir = os.path.join(cfg["_base"], "logs")
         self.last, self.repeats = None, 0
         self.day, self.runs_today = None, 0
+        self.run_times = []  # when each of today's runs started
         self.unknown_since, self.saved_unknown = None, False
         self.card_pause_until, self.card_failures = None, 0
         self.prev_state, self.no_window = None, False
@@ -130,11 +131,12 @@ class Bot:
             if self.day is not None:
                 log.info(f"{self.day}: {self.runs_today} runs")
             self.day, self.runs_today = now.date(), 0
+            self.run_times = []
 
         state, until = self.schedule.state(now)
         if state != self.prev_state:
-            text = {"active": "playing", "break": "on a break", "off": "off hours"}[state]
-            log.info(f"-- {text}" + (f" until {until:%d/%m %H:%M}" if until else ""))
+            text = {"active": "Playing", "break": "On a break", "off": "Off hours"}[state]
+            log.info(text + (f" until {until:%H:%M}" if until else ""))
             self.prev_state = state
         if state == "break":
             self.set_status(f"On a break until {until:%H:%M}", "wait")
@@ -218,6 +220,7 @@ class Bot:
         self.mouse.click(x, y, w, h)
         if r.counts_run:
             self.runs_today += 1
+            self.run_times.append(self.now())
             log.info(f"run #{self.runs_today} of the day started")
         if r.action == "wait_tp":
             mins = between(self.rng, self.cfg["tp"]["wait_min"])
