@@ -362,6 +362,34 @@ def test_status_follows_the_schedule(world):
     assert bot.status.startswith("Off hours until") and bot.status_kind == "wait"
 
 
+def test_out_of_tp_is_guessed_without_the_popup_picture(world):
+    cfg, vision, *_ = world
+    cfg["rule"] = [{"name": "Start career", "if_seen": ["home_career"], "checks_tp": True}]
+    clock = {"t": datetime(2026, 11, 4, 15, 0)}
+    bot, mouse = make_bot(cfg, vision, now=lambda: clock["t"])
+    waits = []
+    for _ in range(3):  # Start Career pressed again and again, and no run starts
+        waits.append(bot.step())
+        clock["t"] += timedelta(minutes=1)
+    assert len(mouse.clicks) == 3
+    assert waits[0] < 10 and waits[1] < 10 and 25 * 60 <= waits[2] <= 45 * 60
+    assert bot.status.startswith("Out of TP")
+
+
+def test_a_started_run_resets_the_tp_guess(world):
+    cfg, vision, *_ = world
+    cfg["rule"] = [{"name": "Start career", "if_seen": ["home_career"], "checks_tp": True}]
+    clock = {"t": datetime(2026, 11, 4, 15, 0)}
+    bot, _ = make_bot(cfg, vision, now=lambda: clock["t"])
+    bot.step()
+    bot.step()
+    from umabot.engine import Rule
+    confirm = Rule(name="Confirm start", if_seen=["next"], counts_run=True)  # the confirm popup appeared
+    bot.execute(confirm, "next", vision.capture())
+    assert bot.tp_tries == [] and bot.runs_today == 1
+    assert bot.step() < 10
+
+
 def test_empty_or_corrupt_templates_are_ignored(tmp_path):
     from umabot.vision import load_templates
     t = tmp_path / "templates"

@@ -26,6 +26,7 @@ class Rule:
     action: str = "click"
     starts_run: bool = False
     counts_run: bool = False
+    checks_tp: bool = False   # pressing it starts a run only if there's enough TP
     enabled: bool = True
     missing: list = field(default_factory=list)
 
@@ -70,6 +71,7 @@ class Bot:
         self.last, self.repeats = None, 0
         self.day, self.runs_today = None, 0
         self.run_times = []  # when each of today's runs started
+        self.tp_tries = []   # recent presses of a checks_tp button that didn't start a run
         self.unknown_since, self.saved_unknown = None, False
         self.card_pause_until, self.card_failures = None, 0
         self.prev_state, self.no_window = None, False
@@ -221,7 +223,12 @@ class Bot:
         if r.counts_run:
             self.runs_today += 1
             self.run_times.append(self.now())
+            self.tp_tries = []
             log.info(f"run #{self.runs_today} of the day started")
+        if r.checks_tp and self._looks_out_of_tp():
+            r = Rule(name=r.name, if_seen=r.if_seen, action="wait_tp")
+            log.info(f"'{r.name}' was pressed {self.cfg['tp']['guess_after']} times without a run starting: "
+                     "probably out of TP")
         if r.action == "wait_tp":
             mins = between(self.rng, self.cfg["tp"]["wait_min"])
             log.info(f"out of TP, trying again in {mins:.0f} min")
@@ -229,6 +236,20 @@ class Bot:
             return mins * 60
         self.mouse.maybe_distract(log.info)
         return between(self.rng, self.cfg["human"]["poll_s"])
+
+    def _looks_out_of_tp(self):
+        """Without a picture of the "not enough TP" popup: if Start Career keeps being pressed and no run
+        starts, the game is showing that popup."""
+        tp = self.cfg["tp"]
+        if tp["guess_after"] <= 0:
+            return False
+        now = self.now()
+        window = timedelta(minutes=tp["guess_window_min"])
+        self.tp_tries = [t for t in self.tp_tries if now - t < window] + [now]
+        if len(self.tp_tries) >= tp["guess_after"]:
+            self.tp_tries = []
+            return True
+        return False
 
     def scroll_point(self, frame, marker=None):
         """Where to scroll the friend list. "auto": same column as the list's title (works in any

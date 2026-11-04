@@ -21,7 +21,7 @@ the order they happen. Use **PrtScn** in fullscreen, or **Alt+PrtScn** in window
 | 4 | Friend support card list | `friend_list`, `refresh` |
 | 5 | Deck screen with the friend card chosen | `start_career` |
 | 6 | Popup confirming the start (shows the TP cost) | `confirm_start` |
-| 7 | Popup when there isn't enough TP (don't confirm anything) | `tp_popup`, `cancel` |
+| 7 | TP recovery window: tap the **+** next to the TP bar on the home screen (don't use anything). Without it the bot still notices when TP runs out | `tp_popup`, `cancel` |
 | 8 | Where Independent Training is turned on, plus its confirmation | `independent_training`, `confirm_independent_training` |
 | 9 | Every screen from the end of the career back to Home, one per click | `complete_career`, `ok`, `close`, … |
 | 10 | Any popup that would spend carats (don't confirm it) | `stop_carats` |

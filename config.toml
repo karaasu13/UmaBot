@@ -32,6 +32,8 @@ poll_s = [0.8, 1.8]             # time between screenshots
 
 [tp]
 wait_min = [25, 45]             # out of TP: wait this long before trying again (no TP is ever wasted)
+guess_after = 3                 # Start Career pressed this many times without a run starting = out of TP
+guess_window_min = 10           # ...within this many minutes (0 in guess_after turns the guess off)
 
 [card]
 # Which card to borrow is chosen in the app (or with "card"); it's saved in settings.json.
@@ -59,6 +61,7 @@ discord_webhook = ""            # optional: webhook URL to get notified when the
 #  action        click | stop | card | wait_tp | center
 #  starts_run    only happens inside the schedule
 #  counts_run    counts as a new run
+#  checks_tp     starts a run only if there's enough TP (used to notice that TP ran out)
 #
 #  Rules that use templates you don't have yet disable themselves (see "check").
 # ============================================================================
@@ -103,6 +106,7 @@ name = "Start career"
 if_seen = ["start_career"]
 if_not_seen = ["empty_friend_slot"]
 starts_run = true
+checks_tp = true
 
 [[rule]]
 name = "Confirm start (spends 30 TP)"
