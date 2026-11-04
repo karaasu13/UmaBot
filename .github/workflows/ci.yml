@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  testes:
+  tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,8 +16,8 @@ jobs:
       - run: pip install opencv-python-headless numpy pytest
       - run: python -m pytest -q
 
-  exe-windows:
-    needs: testes
+  windows-exe:
+    needs: tests
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,21 +25,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --onefile --name UmaBot --collect-submodules umabot run.py
-      - name: Testar o .exe
+      - run: pyinstaller --onefile --name UmaBot --icon assets/icon.ico --collect-submodules umabot run.py
+      - name: Smoke-test the .exe
         run: |
           copy config.toml dist\
           dist\UmaBot.exe --help
-          dist\UmaBot.exe verificar
-          dist\UmaBot.exe horario
-      - name: Empacotar
+          dist\UmaBot.exe check
+          dist\UmaBot.exe schedule
+      - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force pacote/templates | Out-Null
-          Copy-Item dist/UmaBot.exe, config.toml, README.md pacote/
-          Copy-Item templates/README.md pacote/templates/
-          Get-ChildItem templates -Filter *.png -ErrorAction SilentlyContinue | Copy-Item -Destination pacote/templates/
+          New-Item -ItemType Directory -Force package/templates | Out-Null
+          Copy-Item dist/UmaBot.exe, config.toml, README.md package/
+          Copy-Item templates/README.md package/templates/
+          Get-ChildItem templates -Filter *.png -ErrorAction SilentlyContinue | Copy-Item -Destination package/templates/
       - uses: actions/upload-artifact@v4
         with:
           name: UmaBot-windows
-          path: pacote/
+          path: package/

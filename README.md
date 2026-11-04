@@ -1,77 +1,80 @@
+<p align="center"><img src="assets/icon.png" width="128" alt="UmaBot"></p>
+
 # UmaBot
 
-Bot para farmar fãs no **Umamusume: Pretty Derby (Steam)**. Usa o treino independente do jogo, acaba a run,
-começa outra e escolhe sempre a carta da **Light Hello**.
+Fan-farming bot for **Umamusume: Pretty Derby (Steam)**. It uses the game's own Independent Training,
+finishes the run, starts a new one and always picks the **Light Hello** support card.
 
-Não mexe na API nem no jogo: só tira screenshots da janela e clica com o rato, como uma pessoa.
+It never touches the game's API or files: it only takes screenshots of the window and clicks with the mouse, like a person.
 
-> ⚠️ Os Termos de Uso da Cygames proíbem ferramentas de automação. Este método é o mais difícil de detetar,
-> mas o risco não é zero. Usa por tua conta e risco.
+> ⚠️ Cygames' Terms of Use forbid automation tools. This approach is the hardest to detect, but the risk
+> is not zero. Use at your own risk.
 
-## O que faz para parecer humano
+## What makes it look human
 
-- **Cliques espalhados pelo botão**: cada clique cai num ponto diferente, mais provável perto do centro e nunca nas bordas.
-- **Rato em curva**: trajetos de Bézier com aceleração e travagem, velocidade que depende da distância e, às vezes, um pequeno overshoot corrigido.
-- **Tempos de reação variáveis** (distribuição log-normal), tempo de carregar no botão variável e pausas curtas ocasionais.
-- **Horário normal**: só começa runs dentro de um horário (por omissão 10:30 → 01:00) que muda até ±45 min todos os dias, com 1 a 3 pausas aleatórias. Uma noite inteira parada não desperdiça TP, porque o TP leva 16h40 a encher.
-- **Sem TP**: cancela o popup e espera 25–45 min. Nunca gasta itens nem carats.
+- **Clicks spread over the button**: every click lands on a different point, most likely near the centre and never on the edges.
+- **Curved mouse movement**: Bézier paths with acceleration and deceleration, speed that depends on distance and the occasional small overshoot that gets corrected.
+- **Variable reaction times** (log-normal distribution), variable button hold time and occasional short pauses.
+- **Normal hours**: it only starts runs inside a schedule (10:30 → 01:00 by default) that shifts by up to ±45 min every day, with 1 to 3 random breaks. A full night off wastes no TP, since TP takes 16h40 to fill up.
+- **Out of TP**: it cancels the popup and waits 25–45 min. It never spends items or carats.
 
-## Segurança
+## Safety
 
-- Para sozinho se aparecer um popup de carats (`stop_carats`) ou de veteranas cheias.
-- Para se o mesmo clique se repetir 25 vezes sem o ecrã mudar.
-- Para se não encontrar a Light Hello 8 vezes seguidas.
-- Guarda screenshots em `logs/` sempre que para ou não reconhece o ecrã.
-- Pode avisar-te no Discord, se meteres um webhook no `config.toml`.
-- Para parar à mão: Ctrl+C, ou atira o rato para o canto superior esquerdo do ecrã.
+- Stops on its own if a carats popup (`stop_carats`) or the veterans-list-full warning shows up.
+- Stops if the same click repeats 25 times without the screen changing.
+- Stops if it can't find Light Hello 8 times in a row.
+- Saves screenshots to `logs/` whenever it stops or doesn't recognise the screen.
+- Can notify you on Discord, if you add a webhook to `config.toml`.
+- To stop it manually: Ctrl+C, or fling the mouse to the top-left corner of the screen.
 
-## Instalar
+## Install
 
-**Opção A: .exe (sem Python).** Vai a *Actions* → última build verde → descarrega `UmaBot-windows`. Descompacta e usa
-`UmaBot.exe <comando>` em vez de `python -m umabot <comando>`.
+**Option A: .exe (no Python).** Go to *Actions*, open the latest green run and download `UmaBot-windows`. Unzip it and use
+`UmaBot.exe <command>` instead of `python -m umabot <command>`.
 
-**Opção B: Python 3.11+**
+**Option B: Python 3.11+**
 ```
 pip install -r requirements.txt
 ```
 
-## Primeira vez
+## First time
 
 ```
-python -m umabot baixar       # descarrega os botões genéricos e a carta da Light Hello
-python -m umabot verificar    # diz que templates faltam (não precisa do jogo)
-python -m umabot recortar X   # recorta cada template em falta, com o jogo aberto
-python -m umabot teste        # mostra o que o bot vê agora e o que faria
-python -m umabot horario      # mostra o horário dos próximos dias
-python -m umabot              # corre o bot
+python -m umabot download    # downloads the generic buttons and the Light Hello card
+python -m umabot check       # lists the templates that are still missing (no game needed)
+python -m umabot crop X      # crop each missing template, with the game open
+python -m umabot test        # shows what the bot sees right now and what it would do
+python -m umabot schedule    # shows the schedule for the next few days
+python -m umabot             # runs the bot
 ```
 
-A lista do que falta recortar, e onde está cada coisa, está em [`templates/README.md`](templates/README.md).
+The list of what still needs cropping, and where each thing is, lives in [`templates/README.md`](templates/README.md).
 
-**Na primeira vez fica a ver** pelo menos uma run completa e uma vez em que o TP acabe, antes de deixar o bot sozinho.
+**The first time, watch it** for at least one full run and one time the TP runs out before leaving it alone.
 
-## Requisitos no PC
+## PC requirements
 
-- Jogo em ecrã inteiro a 1920x1080, no monitor principal, sem janelas por cima.
-- O PC não pode bloquear nem suspender (Definições → Energia → nunca). O monitor pode desligar.
-- Enquanto o bot corre, o rato é dele.
+- Game in fullscreen at 1920x1080, on the main monitor, with nothing on top of it.
+- The PC must not lock or sleep (Settings → Power → never). The monitor may turn off.
+- While the bot runs, the mouse is its.
 
-## Configuração
+## Configuration
 
-Está tudo no [`config.toml`](config.toml): horário, tempos, limiares e as **regras**, que dizem o que fazer em cada ecrã.
-As regras são avaliadas de cima para baixo e a primeira que bate é executada. Uma regra que use templates que
-ainda não existem fica desligada sozinha.
+Everything is in [`config.toml`](config.toml): schedule, timings, thresholds and the **rules** that say what to do on each screen.
+Rules are checked top to bottom and the first one that matches is executed. A rule that uses templates you don't
+have yet disables itself.
 
-## Estrutura
+## Layout
 
 ```
 umabot/
-  visao.py       janela do jogo, screenshots, procura de templates (multi-escala para a carta)
-  humano.py      cliques, trajetos e tempos humanos
-  horario.py     horário diário com variação e pausas
-  motor.py       motor de regras e ciclo principal
-  ferramentas.py baixar, verificar, teste, recortar, posicao, horario
-config.toml      configuração e regras
-templates/       recortes dos botões
-tests/           testes com ecrã sintético (correm no CI)
+  vision.py    game window, screenshots, template matching (multi-scale for the card)
+  human.py     human-like clicks, paths and timings
+  schedule.py  daily schedule with jitter and breaks
+  engine.py    rule engine and main loop
+  tools.py     download, check, test, crop, position, schedule
+config.toml    configuration and rules
+templates/     button crops
+assets/        app icon
+tests/         tests on a synthetic screen (run in CI)
 ```

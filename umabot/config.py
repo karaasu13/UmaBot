@@ -1,75 +1,75 @@
-"""Leitura do config.toml com valores por omissão."""
+"""Loads config.toml on top of the defaults."""
 import copy
 import os
 import sys
 import tomllib
 
-PADRAO = {
-    "jogo": {
-        "janela": "Umamusume",
-        "resolucao_ref": [1920, 1080],
-        "limiar": 0.85,
-        "limiares": {},
+DEFAULTS = {
+    "game": {
+        "window": "Umamusume",
+        "reference_resolution": [1920, 1080],
+        "threshold": 0.85,
+        "thresholds": {},
     },
-    "horario": {
-        "ativo": True,
-        "inicio": "10:30",
-        "fim": "01:00",
-        "variacao_min": 45,
-        "pausas_por_dia": [1, 3],
-        "duracao_pausa_min": [15, 70],
-        "acabar_run_fora_de_horas": True,
+    "schedule": {
+        "enabled": True,
+        "start": "10:30",
+        "end": "01:00",
+        "jitter_min": 45,
+        "breaks_per_day": [1, 3],
+        "break_length_min": [15, 70],
+        "finish_run_after_hours": True,
     },
-    "humano": {
-        "reacao_s": [0.35, 1.6],
-        "segurar_ms": [55, 140],
-        "distracao_prob": 0.04,
-        "distracao_s": [6, 75],
-        "intervalo_s": [0.8, 1.8],
+    "human": {
+        "reaction_s": [0.35, 1.6],
+        "hold_ms": [55, 140],
+        "distraction_chance": 0.04,
+        "distraction_s": [6, 75],
+        "poll_s": [0.8, 1.8],
     },
-    "tp": {"espera_min": [25, 45]},
-    "carta": {
-        "templates": ["carta_lighthello", "carta_lighthello_inteira"],
-        "limiar": 0.75,
-        "escalas": [0.4, 1.8],
+    "tp": {"wait_min": [25, 45]},
+    "card": {
+        "templates": ["card_light_hello", "card_light_hello_full"],
+        "threshold": 0.75,
+        "scales": [0.4, 1.8],
         "scroll_pos": [0.30, 0.55],
-        "scroll_qtd": -5,
-        "scroll_tentativas": 6,
-        "atualizar": "atualizar",
-        "max_falhas": 8,
+        "scroll_amount": -5,
+        "scroll_attempts": 6,
+        "refresh": "refresh",
+        "max_failures": 8,
     },
-    "seguranca": {
-        "max_repeticoes": 25,
-        "desconhecido_min": 40,
+    "safety": {
+        "max_repeats": 25,
+        "unknown_screen_min": 40,
         "discord_webhook": "",
     },
-    "regra": [],
+    "rule": [],
 }
 
 
-def pasta_base():
-    """Pasta do projeto (ou do .exe, se for a versão compilada)."""
+def base_dir():
+    """Project folder (or the .exe's folder in the compiled version)."""
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _fundir(base, novo):
-    for k, v in novo.items():
+def _merge(base, new):
+    for k, v in new.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _fundir(base[k], v)
+            _merge(base[k], v)
         else:
             base[k] = v
     return base
 
 
-def carregar(caminho=None, base=None):
-    base = base or pasta_base()
-    caminho = caminho or os.path.join(base, "config.toml")
-    dados = {}
-    if os.path.exists(caminho):
-        with open(caminho, "rb") as f:
-            dados = tomllib.load(f)
-    cfg = _fundir(copy.deepcopy(PADRAO), dados)
+def load(path=None, base=None):
+    base = base or base_dir()
+    path = path or os.path.join(base, "config.toml")
+    data = {}
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+    cfg = _merge(copy.deepcopy(DEFAULTS), data)
     cfg["_base"] = base
     return cfg

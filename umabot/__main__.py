@@ -1,52 +1,52 @@
-"""python -m umabot [comando]"""
+"""python -m umabot [command]"""
 import argparse
 import sys
 
-from . import config, ferramentas
-from .registo import configurar
-from .visao import ativar_dpi
+from . import config, tools
+from .logger import setup
+from .vision import enable_dpi_awareness
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="umabot", description="Bot de fãs para Umamusume (Steam).")
-    p.add_argument("--config", help="caminho do config.toml")
+    p = argparse.ArgumentParser(prog="umabot", description="Fan-farming bot for Umamusume (Steam).")
+    p.add_argument("--config", help="path to config.toml")
     sub = p.add_subparsers(dest="cmd")
-    sub.add_parser("correr", help="corre o bot (é o que faz sem comando)")
-    sub.add_parser("baixar", help="descarrega os botões genéricos e a carta da Light Hello")
-    sub.add_parser("verificar", help="mostra que templates faltam (não precisa do jogo)")
-    sub.add_parser("teste", help="screenshot do jogo + o que o bot vê e faria agora")
-    r = sub.add_parser("recortar", help="recorta um template do jogo ou de um screenshot")
-    r.add_argument("nome")
-    r.add_argument("--de", help="recortar de um ficheiro PNG em vez do jogo")
-    sub.add_parser("posicao", help="mostra a posição do rato relativa ao jogo")
-    sub.add_parser("horario", help="mostra o horário dos próximos dias")
+    sub.add_parser("run", help="run the bot (default when no command is given)")
+    sub.add_parser("download", help="download the generic buttons and the Light Hello card")
+    sub.add_parser("check", help="list the templates that are still missing (no game needed)")
+    sub.add_parser("test", help="screenshot the game and show what the bot sees and would do")
+    c = sub.add_parser("crop", help="crop a template from the game or from a screenshot")
+    c.add_argument("name")
+    c.add_argument("--from", dest="file", help="crop from a PNG file instead of the game")
+    sub.add_parser("position", help="show the mouse position relative to the game")
+    sub.add_parser("schedule", help="show the schedule for the next few days")
     a = p.parse_args(argv)
 
-    ativar_dpi()
-    cfg = config.carregar(a.config)
-    cmd = a.cmd or "correr"
-    if cmd == "baixar":
-        ferramentas.baixar(cfg)
-    elif cmd == "verificar":
-        ferramentas.verificar(cfg)
-    elif cmd == "teste":
-        ferramentas.teste(cfg)
-    elif cmd == "recortar":
-        ferramentas.recortar(cfg, a.nome, a.de)
-    elif cmd == "posicao":
-        ferramentas.posicao(cfg)
-    elif cmd == "horario":
-        ferramentas.horario(cfg)
+    enable_dpi_awareness()
+    cfg = config.load(a.config)
+    cmd = a.cmd or "run"
+    if cmd == "download":
+        tools.download(cfg)
+    elif cmd == "check":
+        tools.check(cfg)
+    elif cmd == "test":
+        tools.test(cfg)
+    elif cmd == "crop":
+        tools.crop(cfg, a.name, a.file)
+    elif cmd == "position":
+        tools.position(cfg)
+    elif cmd == "schedule":
+        tools.schedule(cfg)
     else:
-        from .motor import Bot
-        configurar(cfg["_base"])
+        from .engine import Bot
+        setup(cfg["_base"])
         try:
-            Bot(cfg).correr()
+            Bot(cfg).run()
         except KeyboardInterrupt:
-            print("\nparado.")
+            print("\nstopped.")
         except Exception as e:
             if type(e).__name__ == "FailSafeException":
-                print("\nparado (rato no canto do ecrã).")
+                print("\nstopped (mouse in the screen corner).")
             else:
                 raise
 

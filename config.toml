@@ -1,127 +1,127 @@
 # ============================================================================
-#  UmaBot — configuração. Podes mudar tudo aqui sem mexer no código.
+#  UmaBot configuration. Everything can be changed here without touching code.
 # ============================================================================
 
-[jogo]
-janela = "Umamusume"          # título da janela do jogo
-resolucao_ref = [1920, 1080]  # tamanho em que os templates foram recortados (o bot ajusta sozinho)
-limiar = 0.85                 # semelhança mínima (0-1) para dar um botão como visto
+[game]
+window = "Umamusume"                 # game window title
+reference_resolution = [1920, 1080]  # size the templates were cropped at (the bot rescales on its own)
+threshold = 0.85                     # minimum similarity (0-1) to consider a button visible
 
-[jogo.limiares]               # limiares por template, se algum precisar de ser mais/menos exigente
+[game.thresholds]                    # per-template thresholds, if one needs to be stricter/looser
 next2 = 0.9
 
-[horario]
-ativo = true
-inicio = "10:30"              # hora "normal" a que começas a jogar
-fim = "01:00"                 # pode passar da meia-noite
-variacao_min = 45             # todos os dias o início e o fim mudam até ± 45 min
-pausas_por_dia = [1, 3]       # pausas aleatórias dentro do horário (almoço, jantar, ...)
-duracao_pausa_min = [15, 70]
-acabar_run_fora_de_horas = true   # fora de horas acaba a run em curso, mas não começa outra
+[schedule]
+enabled = true
+start = "10:30"                 # the "normal" time you'd start playing
+end = "01:00"                   # may go past midnight
+jitter_min = 45                 # start and end shift by up to ±45 min every day
+breaks_per_day = [1, 3]         # random breaks inside the active window (lunch, dinner, ...)
+break_length_min = [15, 70]
+finish_run_after_hours = true   # after hours: finish the current run, but don't start a new one
 
-[humano]
-reacao_s = [0.35, 1.6]        # tempo entre o botão aparecer e o clique
-segurar_ms = [55, 140]        # quanto tempo o botão do rato fica carregado
-distracao_prob = 0.04         # chance, por clique, de uma pausa curta
-distracao_s = [6, 75]
-intervalo_s = [0.8, 1.8]      # tempo entre screenshots
+[human]
+reaction_s = [0.35, 1.6]        # delay between a button appearing and the click
+hold_ms = [55, 140]             # how long the mouse button stays pressed
+distraction_chance = 0.04       # chance, per click, of a short pause
+distraction_s = [6, 75]
+poll_s = [0.8, 1.8]             # time between screenshots
 
 [tp]
-espera_min = [25, 45]         # sem TP: espera isto antes de tentar outra vez (o TP nunca se perde)
+wait_min = [25, 45]             # out of TP: wait this long before trying again (no TP is ever wasted)
 
-[carta]
-templates = ["carta_lighthello", "carta_lighthello_inteira"]
-limiar = 0.75
-escalas = [0.4, 1.8]          # a imagem da net é procurada em vários tamanhos
-scroll_pos = [0.30, 0.55]     # onde fazer scroll na lista (fração da janela; vê com "posicao")
-scroll_qtd = -5
-scroll_tentativas = 6
-atualizar = "atualizar"       # botão de atualizar a lista de amigos (opcional)
-max_falhas = 8                # para o bot se não encontrar a carta X vezes seguidas
+[card]
+templates = ["card_light_hello", "card_light_hello_full"]
+threshold = 0.75
+scales = [0.4, 1.8]             # the web image is searched at several sizes
+scroll_pos = [0.30, 0.55]       # where to scroll the list (fraction of the window; see "position")
+scroll_amount = -5
+scroll_attempts = 6
+refresh = "refresh"             # friend list refresh button (optional)
+max_failures = 8                # stop if the card isn't found X times in a row
 
-[seguranca]
-max_repeticoes = 25           # o mesmo clique X vezes seguidas sem o ecrã mudar = encravou, para
-desconhecido_min = 40         # X min sem reconhecer o ecrã: guarda um screenshot em logs/
-discord_webhook = ""          # opcional: URL de webhook para avisar quando o bot parar
+[safety]
+max_repeats = 25                # same click X times in a row without the screen changing = stuck, stop
+unknown_screen_min = 40         # X min without recognising the screen: save a screenshot to logs/
+discord_webhook = ""            # optional: webhook URL to get notified when the bot stops
 
 # ============================================================================
-#  REGRAS — avaliadas de cima para baixo; a primeira que bate é executada.
+#  RULES: checked top to bottom; the first one that matches is executed.
 #
-#  se_vir      templates que têm de estar TODOS no ecrã
-#  se_nao_vir  templates que NÃO podem estar no ecrã
-#  qualquer    clica no primeiro destes que estiver visível
-#  clicar      onde clicar (por omissão, o primeiro do se_vir)
-#  acao        clicar | parar | carta | esperar_tp | centro
-#  inicio_run  só acontece dentro do horário
-#  conta_run   conta como uma run nova
+#  if_seen       templates that must ALL be on screen
+#  if_not_seen   templates that must NOT be on screen
+#  any_of        click the first of these that is visible
+#  click         where to click (defaults to the first if_seen template)
+#  action        click | stop | card | wait_tp | center
+#  starts_run    only happens inside the schedule
+#  counts_run    counts as a new run
 #
-#  Regras com templates em falta ficam desligadas sozinhas (vê "verificar").
+#  Rules that use templates you don't have yet disable themselves (see "check").
 # ============================================================================
 
-[[regra]]
-nome = "Parar se for gastar carats"
-se_vir = ["stop_carats"]
-acao = "parar"
+[[rule]]
+name = "Stop if about to spend carats"
+if_seen = ["stop_carats"]
+action = "stop"
 
-[[regra]]
-nome = "Parar se a lista de veteranas estiver cheia"
-se_vir = ["stop_veteranas_cheias"]
-acao = "parar"
+[[rule]]
+name = "Stop if the veterans list is full"
+if_seen = ["stop_veterans_full"]
+action = "stop"
 
-[[regra]]
-nome = "Sem TP: cancelar e esperar"
-se_vir = ["popup_tp"]
-clicar = "cancelar"
-acao = "esperar_tp"
+[[rule]]
+name = "Out of TP: cancel and wait"
+if_seen = ["tp_popup"]
+click = "cancel"
+action = "wait_tp"
 
-[[regra]]
-nome = "Erro de ligação"
-se_vir = ["erro_ligacao"]
-clicar = "tentar_novamente"
+[[rule]]
+name = "Connection error"
+if_seen = ["connection_error"]
+click = "retry"
 
-[[regra]]
-nome = "Ecrã título"
-se_vir = ["ecra_titulo"]
-acao = "centro"
+[[rule]]
+name = "Title screen"
+if_seen = ["title_screen"]
+action = "center"
 
-[[regra]]
-nome = "Escolher a Light Hello"
-se_vir = ["ecra_amigos"]
-acao = "carta"
+[[rule]]
+name = "Pick Light Hello"
+if_seen = ["friend_list"]
+action = "card"
 
-[[regra]]
-nome = "Abrir a lista de amigos"
-se_vir = ["slot_amigo_vazio"]
+[[rule]]
+name = "Open the friend list"
+if_seen = ["empty_friend_slot"]
 
-[[regra]]
-nome = "Começar carreira"
-se_vir = ["iniciar_carreira"]
-se_nao_vir = ["slot_amigo_vazio"]
-inicio_run = true
+[[rule]]
+name = "Start career"
+if_seen = ["start_career"]
+if_not_seen = ["empty_friend_slot"]
+starts_run = true
 
-[[regra]]
-nome = "Confirmar início (gasta 30 TP)"
-se_vir = ["confirmar_inicio"]
-inicio_run = true
-conta_run = true
+[[rule]]
+name = "Confirm start (spends 30 TP)"
+if_seen = ["confirm_start"]
+starts_run = true
+counts_run = true
 
-[[regra]]
-nome = "Ir para a Carreira"
-se_vir = ["home_carreira"]
-inicio_run = true
+[[rule]]
+name = "Go to Career"
+if_seen = ["home_career"]
+starts_run = true
 
-[[regra]]
-nome = "Treino independente"
-se_vir = ["treino_independente"]
+[[rule]]
+name = "Independent training"
+if_seen = ["independent_training"]
 
-[[regra]]
-nome = "Confirmar treino independente"
-se_vir = ["confirmar_treino_independente"]
+[[rule]]
+name = "Confirm independent training"
+if_seen = ["confirm_independent_training"]
 
-[[regra]]
-nome = "Acabar carreira"
-se_vir = ["complete_career"]
+[[rule]]
+name = "Complete career"
+if_seen = ["complete_career"]
 
-[[regra]]
-nome = "Botões genéricos"
-qualquer = ["next", "next2", "ok", "close", "skip", "skip_grande"]
+[[rule]]
+name = "Generic buttons"
+any_of = ["next", "next2", "ok", "close", "skip", "skip_big"]

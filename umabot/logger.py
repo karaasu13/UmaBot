@@ -1,4 +1,4 @@
-"""Logs (consola + ficheiro) e aviso opcional no Discord."""
+"""Logging (console + file) and optional Discord notifications."""
 import json
 import logging
 import os
@@ -8,22 +8,22 @@ from logging.handlers import RotatingFileHandler
 log = logging.getLogger("umabot")
 
 
-def configurar(base):
-    pasta = os.path.join(base, "logs")
-    os.makedirs(pasta, exist_ok=True)
+def setup(base):
+    folder = os.path.join(base, "logs")
+    os.makedirs(folder, exist_ok=True)
     if log.handlers:
-        return pasta
+        return folder
     log.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S")
     for h in (logging.StreamHandler(),
-              RotatingFileHandler(os.path.join(pasta, "umabot.log"), maxBytes=1_000_000,
+              RotatingFileHandler(os.path.join(folder, "umabot.log"), maxBytes=1_000_000,
                                   backupCount=3, encoding="utf-8")):
         h.setFormatter(fmt)
         log.addHandler(h)
-    return pasta
+    return folder
 
 
-def notificar(webhook, msg):
+def notify(webhook, msg):
     log.info(msg)
     if not webhook:
         return
@@ -31,5 +31,5 @@ def notificar(webhook, msg):
         req = urllib.request.Request(webhook, data=json.dumps({"content": f"UmaBot: {msg}"}).encode(),
                                      headers={"Content-Type": "application/json", "User-Agent": "UmaBot"})
         urllib.request.urlopen(req, timeout=10).close()
-    except Exception as e:  # o aviso nunca pode deitar o bot abaixo
-        log.info(f"(falhou o aviso no Discord: {e})")
+    except Exception as e:  # a failed notification must never take the bot down
+        log.info(f"(Discord notification failed: {e})")

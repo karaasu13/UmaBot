@@ -1,4 +1,4 @@
-"""Ponto de entrada para o .exe (PyInstaller). Em Python normal usa: python -m umabot"""
+"""Entry point for the .exe (PyInstaller). With regular Python use: python -m umabot"""
 from umabot.__main__ import main
 
 if __name__ == "__main__":

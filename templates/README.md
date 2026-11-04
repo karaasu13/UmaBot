@@ -1,64 +1,64 @@
 # Templates
 
-Cada template é um recorte PNG de um botão (ou de algo que identifica um ecrã).
-O nome do ficheiro tem de ser **exatamente** o da tabela, porque é o nome que as regras do `config.toml` usam.
+Each template is a PNG crop of a button (or of something that identifies a screen).
+The file name must be **exactly** the one in the tables below, because that's the name the rules in `config.toml` use.
 
-- `templates/_baixados/` é criada pelo `python -m umabot baixar`, não vai para o git.
-- `templates/*.png` são os teus recortes. Se tiverem o mesmo nome que um dos baixados, ganham os teus.
+- `templates/_downloaded/` is created by `python -m umabot download` and is not committed to git.
+- `templates/*.png` are your own crops. If one has the same name as a downloaded one, yours wins.
 
-Recorta sempre com o jogo em **ecrã inteiro a 1920x1080**. Noutro tamanho com o mesmo formato
-(1600x900, 1280x720, ...) o bot também ajusta, mas a 1920x1080 é mais fiável.
+Always crop with the game in **fullscreen at 1920x1080**. Other sizes with the same aspect ratio
+(1600x900, 1280x720, ...) also work because the bot rescales, but 1920x1080 is the most reliable.
 
-## Já vêm do `baixar`
+## Already provided by `download`
 
-| Nome | O que é |
+| Name | What it is |
 |---|---|
-| `next`, `next2` | botão "Next" |
-| `ok` | botão "OK" |
-| `close` | botão "Close" |
-| `cancelar` | botão "Cancel" (usado no popup de TP) |
-| `skip`, `skip_grande` | botão ⏭ de saltar |
-| `complete_career` | botão rosa "Complete Career" |
-| `confirmar`, `voltar`, `ok2`, `lobby_carreira` | extra, por agora não são usados por nenhuma regra |
-| `carta_lighthello`, `carta_lighthello_inteira` | ícone da SSR Light Hello [From the Ground Up], tirado do GameTora |
+| `next`, `next2` | "Next" button |
+| `ok` | "OK" button |
+| `close` | "Close" button |
+| `cancel` | "Cancel" button (used on the TP popup) |
+| `skip`, `skip_big` | ⏭ skip button |
+| `complete_career` | pink "Complete Career" button |
+| `confirm`, `back`, `ok2`, `career_lobby` | extras, not used by any rule yet |
+| `card_light_hello`, `card_light_hello_full` | icon of the SSR Light Hello [From the Ground Up] card, from GameTora |
 
-> Os botões vêm do projeto [umamusume-auto-train](https://github.com/samsulpanjul/umamusume-auto-train)
-> (versão Steam, 1920x1080) e a carta vem do [GameTora](https://gametora.com/umamusume/supports/30052-light-hello).
-> São descarregados para o teu PC, não ficam guardados neste repositório.
+> The buttons come from the [umamusume-auto-train](https://github.com/samsulpanjul/umamusume-auto-train) project
+> (Steam version, 1920x1080) and the card from [GameTora](https://gametora.com/umamusume/supports/30052-light-hello).
+> They are downloaded to your PC and are not stored in this repository.
 
-## Falta recortar (precisa do jogo)
+## Still to crop (needs the game)
 
-| Nome | Onde aparece | Para quê |
+| Name | Where it shows up | What for |
 |---|---|---|
-| `home_carreira` | menu principal, botão **Career** | começar uma run (só dentro do horário) |
-| `slot_amigo_vazio` | ecrã do deck, o espaço vazio da carta de amigo | abrir a lista de amigos |
-| `ecra_amigos` | lista de cartas de amigos: algo que só existe nesse ecrã (ex.: o título) | saber quando procurar a Light Hello |
-| `atualizar` | lista de amigos, botão de atualizar (opcional) | se a Light Hello não aparecer |
-| `iniciar_carreira` | ecrã do deck, botão **Start Career!** | |
-| `confirmar_inicio` | popup a confirmar o início (o que mostra os 30 TP) | conta as runs |
-| `treino_independente` | botão que liga o treino independente | |
-| `confirmar_treino_independente` | confirmação do treino independente (se existir) | |
-| `popup_tp` | popup de TP insuficiente: algo que só existe nele (ex.: o título) | cancela e espera |
-| `stop_carats` | qualquer popup que vá **gastar carats** | **para o bot**: muito importante |
-| `stop_veteranas_cheias` | aviso de lista de veteranas cheia | para o bot |
-| `ecra_titulo` | ecrã inicial ("Tap to start") | clica no meio |
-| `erro_ligacao` + `tentar_novamente` | popup de erro de ligação e o botão **Retry** | |
+| `home_career` | home screen, **Career** button | start a run (only inside the schedule) |
+| `empty_friend_slot` | deck screen, the empty friend card slot | open the friend list |
+| `friend_list` | friend card list: something only that screen has (e.g. its title) | know when to look for Light Hello |
+| `refresh` | friend list, refresh button (optional) | if Light Hello isn't listed |
+| `start_career` | deck screen, **Start Career!** button | |
+| `confirm_start` | popup confirming the start (the one showing the 30 TP) | counts runs |
+| `independent_training` | button that turns on Independent Training | |
+| `confirm_independent_training` | Independent Training confirmation (if there is one) | |
+| `tp_popup` | not-enough-TP popup: something only it has (e.g. its title) | cancel and wait |
+| `stop_carats` | any popup that would **spend carats** | **stops the bot**: very important |
+| `stop_veterans_full` | veterans list full warning | stops the bot |
+| `title_screen` | title screen ("Tap to start") | clicks the middle |
+| `connection_error` + `retry` | connection error popup and its **Retry** button | |
 
-### Como recortar
-
-```
-python -m umabot recortar home_carreira
-```
-Tira um screenshot do jogo daqui a 3 segundos. Arrasta um retângulo à volta do botão e carrega ENTER.
-
-Recorta só o botão, com uma margem pequena. Evita apanhar números que mudam (TP, fãs, datas) ou a personagem.
-
-### Alternativa: mandar screenshots inteiros
-
-Se for mais fácil, tira screenshots do ecrã inteiro (tecla PrtScn, com o jogo em 1920x1080) de cada ecrã
-da tabela. Mete-os em `capturas/` com o nome do template (ex.: `capturas/home_carreira.png`) e faz push.
-Os recortes faço-os eu a partir daí, ou fazes tu com:
+### How to crop
 
 ```
-python -m umabot recortar home_carreira --de capturas/home_carreira.png
+python -m umabot crop home_career
+```
+It takes a screenshot of the game 3 seconds later. Drag a rectangle around the button and press ENTER.
+
+Crop just the button, with a small margin. Avoid numbers that change (TP, fans, dates) and the character.
+
+### Alternative: send full screenshots
+
+If that's easier, take full-screen screenshots (PrtScn key, game at 1920x1080) of each screen in the table,
+put them in `screenshots/` named after the template (e.g. `screenshots/home_career.png`) and push.
+The crops can then be made from those, or you can do it yourself with:
+
+```
+python -m umabot crop home_career --from screenshots/home_career.png
 ```
