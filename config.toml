@@ -1,0 +1,127 @@
+# ============================================================================
+#  UmaBot — configuração. Podes mudar tudo aqui sem mexer no código.
+# ============================================================================
+
+[jogo]
+janela = "Umamusume"          # título da janela do jogo
+resolucao_ref = [1920, 1080]  # tamanho em que os templates foram recortados (o bot ajusta sozinho)
+limiar = 0.85                 # semelhança mínima (0-1) para dar um botão como visto
+
+[jogo.limiares]               # limiares por template, se algum precisar de ser mais/menos exigente
+next2 = 0.9
+
+[horario]
+ativo = true
+inicio = "10:30"              # hora "normal" a que começas a jogar
+fim = "01:00"                 # pode passar da meia-noite
+variacao_min = 45             # todos os dias o início e o fim mudam até ± 45 min
+pausas_por_dia = [1, 3]       # pausas aleatórias dentro do horário (almoço, jantar, ...)
+duracao_pausa_min = [15, 70]
+acabar_run_fora_de_horas = true   # fora de horas acaba a run em curso, mas não começa outra
+
+[humano]
+reacao_s = [0.35, 1.6]        # tempo entre o botão aparecer e o clique
+segurar_ms = [55, 140]        # quanto tempo o botão do rato fica carregado
+distracao_prob = 0.04         # chance, por clique, de uma pausa curta
+distracao_s = [6, 75]
+intervalo_s = [0.8, 1.8]      # tempo entre screenshots
+
+[tp]
+espera_min = [25, 45]         # sem TP: espera isto antes de tentar outra vez (o TP nunca se perde)
+
+[carta]
+templates = ["carta_lighthello", "carta_lighthello_inteira"]
+limiar = 0.75
+escalas = [0.4, 1.8]          # a imagem da net é procurada em vários tamanhos
+scroll_pos = [0.30, 0.55]     # onde fazer scroll na lista (fração da janela; vê com "posicao")
+scroll_qtd = -5
+scroll_tentativas = 6
+atualizar = "atualizar"       # botão de atualizar a lista de amigos (opcional)
+max_falhas = 8                # para o bot se não encontrar a carta X vezes seguidas
+
+[seguranca]
+max_repeticoes = 25           # o mesmo clique X vezes seguidas sem o ecrã mudar = encravou, para
+desconhecido_min = 40         # X min sem reconhecer o ecrã: guarda um screenshot em logs/
+discord_webhook = ""          # opcional: URL de webhook para avisar quando o bot parar
+
+# ============================================================================
+#  REGRAS — avaliadas de cima para baixo; a primeira que bate é executada.
+#
+#  se_vir      templates que têm de estar TODOS no ecrã
+#  se_nao_vir  templates que NÃO podem estar no ecrã
+#  qualquer    clica no primeiro destes que estiver visível
+#  clicar      onde clicar (por omissão, o primeiro do se_vir)
+#  acao        clicar | parar | carta | esperar_tp | centro
+#  inicio_run  só acontece dentro do horário
+#  conta_run   conta como uma run nova
+#
+#  Regras com templates em falta ficam desligadas sozinhas (vê "verificar").
+# ============================================================================
+
+[[regra]]
+nome = "Parar se for gastar carats"
+se_vir = ["stop_carats"]
+acao = "parar"
+
+[[regra]]
+nome = "Parar se a lista de veteranas estiver cheia"
+se_vir = ["stop_veteranas_cheias"]
+acao = "parar"
+
+[[regra]]
+nome = "Sem TP: cancelar e esperar"
+se_vir = ["popup_tp"]
+clicar = "cancelar"
+acao = "esperar_tp"
+
+[[regra]]
+nome = "Erro de ligação"
+se_vir = ["erro_ligacao"]
+clicar = "tentar_novamente"
+
+[[regra]]
+nome = "Ecrã título"
+se_vir = ["ecra_titulo"]
+acao = "centro"
+
+[[regra]]
+nome = "Escolher a Light Hello"
+se_vir = ["ecra_amigos"]
+acao = "carta"
+
+[[regra]]
+nome = "Abrir a lista de amigos"
+se_vir = ["slot_amigo_vazio"]
+
+[[regra]]
+nome = "Começar carreira"
+se_vir = ["iniciar_carreira"]
+se_nao_vir = ["slot_amigo_vazio"]
+inicio_run = true
+
+[[regra]]
+nome = "Confirmar início (gasta 30 TP)"
+se_vir = ["confirmar_inicio"]
+inicio_run = true
+conta_run = true
+
+[[regra]]
+nome = "Ir para a Carreira"
+se_vir = ["home_carreira"]
+inicio_run = true
+
+[[regra]]
+nome = "Treino independente"
+se_vir = ["treino_independente"]
+
+[[regra]]
+nome = "Confirmar treino independente"
+se_vir = ["confirmar_treino_independente"]
+
+[[regra]]
+nome = "Acabar carreira"
+se_vir = ["complete_career"]
+
+[[regra]]
+nome = "Botões genéricos"
+qualquer = ["next", "next2", "ok", "close", "skip", "skip_grande"]
