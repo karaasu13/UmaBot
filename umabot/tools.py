@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 import cv2
 import numpy as np
 
+from .config import cli_name
 from .engine import Bot, prepare_rules
 from .schedule import Schedule
 from .vision import Vision, load_templates
@@ -77,7 +78,7 @@ def download(cfg):
         print("         Save the card image from https://gametora.com/umamusume/supports/30052-light-hello")
         print("         as templates/card_light_hello.png, or crop it from the in-game friend list.")
     print(f"\n{ok} images in {folder}")
-    print("Next:  python -m umabot check")
+    print(f"Next:  {cli_name()} check")
 
 
 def check(cfg):
@@ -93,15 +94,21 @@ def check(cfg):
         print(f"[{'ON ' if r.enabled else 'OFF'}] {r.name}{extra}")
         missing += [t for t in r.missing if t not in missing]
     cards = cfg["card"]["templates"]
-    if any(t in cards for t in missing):
+    downloadable = [t for t in missing if t in BUTTONS]
+    if downloadable:
+        missing = [t for t in missing if t not in BUTTONS]
+        print(f"\nNot downloaded yet ({', '.join(downloadable)}):")
+        print(f"  {cli_name()} download")
+    card_missing = any(t in cards for t in missing)
+    if card_missing:
         missing = [t for t in missing if t not in cards]
         print("\nLight Hello card missing: run 'download', or crop it from the friend list with")
-        print(f"  python -m umabot crop {cards[0]}")
+        print(f"  {cli_name()} crop {cards[0]}")
     if missing:
         print("\nTo crop (with the game open):")
         for t in missing:
-            print(f"  python -m umabot crop {t}")
-    else:
+            print(f"  {cli_name()} crop {t}")
+    if not (missing or downloadable or card_missing):
         print("\nNothing missing!")
 
 

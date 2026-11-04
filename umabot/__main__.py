@@ -1,5 +1,6 @@
-"""python -m umabot [command]"""
+"""python -m umabot [command]   (or UmaBot.exe [command])"""
 import argparse
+import os
 import sys
 
 from . import config, tools
@@ -20,8 +21,22 @@ def main(argv=None):
     c.add_argument("--from", dest="file", help="crop from a PNG file instead of the game")
     sub.add_parser("position", help="show the mouse position relative to the game")
     sub.add_parser("schedule", help="show the schedule for the next few days")
-    a = p.parse_args(argv)
+    args = sys.argv[1:] if argv is None else argv
+    a = p.parse_args(args)
 
+    # .exe opened with a double-click: keep the window open at the end so the last message can be read
+    double_clicked = getattr(sys, "frozen", False) and not args
+    try:
+        dispatch(a)
+    finally:
+        if double_clicked:
+            try:
+                input("\nPress Enter to close...")
+            except (EOFError, KeyboardInterrupt):
+                pass
+
+
+def dispatch(a):
     enable_dpi_awareness()
     cfg = config.load(a.config)
     cmd = a.cmd or "run"
@@ -38,6 +53,10 @@ def main(argv=None):
     elif cmd == "schedule":
         tools.schedule(cfg)
     else:
+        if not os.path.isdir(os.path.join(cfg["_base"], "templates", "_downloaded")):
+            print("First run: downloading the generic buttons...\n")
+            tools.download(cfg)
+            print()
         from .engine import Bot
         setup(cfg["_base"])
         try:

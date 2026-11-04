@@ -29,8 +29,12 @@ It never touches the game's API or files: it only takes screenshots of the windo
 
 ## Install
 
-**Option A: .exe (no Python).** Go to *Actions*, open the latest green run and download `UmaBot-windows`. Unzip it and use
-`UmaBot.exe <command>` instead of `python -m umabot <command>`.
+**Option A: .exe (no Python).** Download
+[**UmaBot-windows.zip**](https://github.com/karaasu13/UmaBot/releases/latest/download/UmaBot-windows.zip)
+(rebuilt automatically on every push) and unzip it.
+
+- Double-click `UmaBot.exe` to run the bot. The first time, it downloads the generic buttons on its own.
+- For the other commands, open a terminal in that folder and use `UmaBot.exe <command>` instead of `python -m umabot <command>`.
 
 **Option B: Python 3.11+**
 ```

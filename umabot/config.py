@@ -54,6 +54,11 @@ def base_dir():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def cli_name():
+    """How the user invokes the bot, for help messages."""
+    return "UmaBot.exe" if getattr(sys, "frozen", False) else "python -m umabot"
+
+
 def _merge(base, new):
     for k, v in new.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
