@@ -6,8 +6,10 @@ The file name must be **exactly** the one in the tables below, because that's th
 - `templates/_downloaded/` is created by `python -m umabot download` and is not committed to git.
 - `templates/*.png` are your own crops. If one has the same name as a downloaded one, yours wins.
 
-Always crop with the game in **fullscreen at 1920x1080**. Other sizes with the same aspect ratio
-(1600x900, 1280x720, ...) also work because the bot rescales, but 1920x1080 is the most reliable.
+You can crop with the game at **any size, windowed or fullscreen**. Every template is stored at the scale of a
+1920x1080 fullscreen game, and `crop` converts your crop on its own using the UI scale it measured for your window.
+Tip: run `test` once on a screen that has a Next/OK/Close button before your first crop. That way the scale of your
+window size is measured, not guessed.
 
 ## Already provided by `download`
 
@@ -55,8 +57,9 @@ Crop just the button, with a small margin. Avoid numbers that change (TP, fans, 
 
 ### Alternative: send full screenshots
 
-If that's easier, take full-screen screenshots (PrtScn key, game at 1920x1080) of each screen in the table,
-put them in `screenshots/` named after the template (e.g. `screenshots/home_career.png`) and push.
+If that's easier, take a screenshot of each screen in the table: **Alt+PrtScn** in windowed mode (only the game
+window), or **PrtScn** in fullscreen. Put them in `screenshots/` named after the template
+(e.g. `screenshots/home_career.png`) and push.
 The crops can then be made from those, or you can do it yourself with:
 
 ```

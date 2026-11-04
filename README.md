@@ -56,9 +56,16 @@ The list of what still needs cropping, and where each thing is, lives in [`templ
 
 **The first time, watch it** for at least one full run and one time the TP runs out before leaving it alone.
 
+## Any resolution, windowed or fullscreen
+
+The game can run at any size, windowed or fullscreen, on any monitor. The bot finds the game window,
+captures only that window and measures the UI scale by itself. In 16:9 it gets the scale right straight away. For
+other shapes it measures it the first time it sees a known button. The result is saved per window size in
+`calibration.json`, so it only has to measure once. If auto ever gets it wrong, set `scale` in `config.toml`.
+
 ## PC requirements
 
-- Game in fullscreen at 1920x1080, on the main monitor, with nothing on top of it.
+- The game window must be visible: not minimised and with nothing on top of it.
 - The PC must not lock or sleep (Settings → Power → never). The monitor may turn off.
 - While the bot runs, the mouse is its.
 
@@ -72,7 +79,7 @@ have yet disables itself.
 
 ```
 umabot/
-  vision.py    game window, screenshots, template matching (multi-scale for the card)
+  vision.py    game window, screenshots, UI-scale detection, template matching (multi-scale for the card)
   human.py     human-like clicks, paths and timings
   schedule.py  daily schedule with jitter and breaks
   engine.py    rule engine and main loop

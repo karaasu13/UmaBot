@@ -172,6 +172,73 @@ def test_normalises_a_smaller_window(world):
     assert abs(m.w - w / 2) <= 1
 
 
+# ---------------------------------------------------------------- any resolution / windowed
+def letterboxed(img, scale, pad_bottom=250):
+    small = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    return cv2.copyMakeBorder(small, 0, pad_bottom, 0, 0, cv2.BORDER_CONSTANT)
+
+
+def test_guessed_scale_is_confirmed_and_remembered(world):
+    cfg, vision, state, *_ = world
+    state["img"] = cv2.resize(state["img"], (1280, 720), interpolation=cv2.INTER_AREA)
+    f = vision.capture()
+    assert not vision.calibrated
+    assert f.find("next")  # seen with the height-based guess (720/1080)
+    assert vision.calibrated and abs(vision.scale - 2 / 3) < 0.02
+    again = Vision(cfg, source=vision.source)  # next run: remembered for a 1280x720 window
+    again.capture()
+    assert again.calibrated and again.scale == pytest.approx(vision.scale, abs=1e-3)
+
+
+def test_any_aspect_ratio_gets_measured(world):
+    cfg, vision, state, rects, _ = world
+    state["img"] = letterboxed(state["img"], 0.7)  # window where the height-based guess is wrong
+    f = vision.capture()
+    assert f.find("next") is None
+    assert vision.maybe_calibrate(f, force=True) and abs(vision.scale - 0.7) < 0.02
+    m = vision.capture().find("next")
+    x, y, w, h = rects["next"]
+    assert m and abs(m.x - (x + w / 2) * 0.7) <= 3 and abs(m.y - (y + h / 2) * 0.7) <= 3
+
+
+def test_bot_measures_the_scale_on_its_own(world):
+    cfg, vision, state, rects, _ = world
+    state["img"] = letterboxed(state["img"], 0.7)
+    bot, mouse = make_bot(cfg, vision)
+    assert bot.step() == 0.2 and vision.calibrated  # measured: look again right away
+    bot.step()
+    x, y, w, h = rects["home_career"]
+    assert inside(mouse.clicks[-1], (x * 0.7, y * 0.7, w * 0.7, h * 0.7))
+
+
+def test_crops_are_saved_at_reference_scale(world, tmp_path):
+    from umabot.tools import save_crop
+    from umabot.vision import similarity
+    _, _, state, rects, _ = world
+    raw = cv2.resize(state["img"], None, fx=0.6, fy=0.6, interpolation=cv2.INTER_AREA)  # small window
+    x, y, w, h = rects["home_career"]
+    box = tuple(round(v * 0.6) for v in (x, y, w, h))
+    dest = str(tmp_path / "crops" / "my_button.png")
+    sw, sh = save_crop(raw, box, 0.6, dest)
+    assert abs(sw - w) <= 2 and abs(sh - h) <= 2
+    val, loc = similarity(state["img"], cv2.imread(dest))  # matches the reference-scale screen
+    assert val > 0.9 and abs(loc[0] - x) <= 3 and abs(loc[1] - y) <= 3
+
+
+def test_scroll_auto_follows_the_list_title(world):
+    cfg, vision, state, rects, card_rect = world
+    screen = state["img"].copy()
+    x, y, w, h = card_rect
+    screen[y:y + h, x:x + w] = synthetic_screen(7)[y:y + h, x:x + w]  # card not on screen
+    state["img"] = screen
+    cfg["rule"] = [{"name": "card", "if_seen": ["friend_list"], "action": "card"}]
+    cfg["card"]["templates"] = ["card_light_hello"]
+    bot, mouse = make_bot(cfg, vision)
+    bot.step()
+    fx, _, fw, _ = rects["friend_list"]
+    assert mouse.scrolls and all(abs(s[0] - (fx + fw / 2)) <= 2 for s in mouse.scrolls)
+
+
 # ---------------------------------------------------------------- human
 def test_click_point_stays_inside_and_varies():
     rng = random.Random(0)

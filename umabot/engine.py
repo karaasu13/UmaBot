@@ -144,6 +144,8 @@ class Bot:
         r, target = self.evaluate(frame, block_run_start=(state != "active"))
         if r is None:
             self.last, self.repeats = None, 0
+            if not self.vision.calibrated and self.vision.maybe_calibrate(frame):
+                return 0.2  # UI scale just measured: look again right away
             self._unknown_screen(frame, now)
             if state == "off":
                 return between(self.rng, (60, 120))
@@ -176,7 +178,7 @@ class Bot:
             notify(self.webhook(), f"stopped: '{r.name}' ({path})")
             return None
         if r.action == "card":
-            return self.pick_card()
+            return self.pick_card(frame.find(r.if_seen[0]) if r.if_seen else None)
 
         self.mouse.react()
         frame = self.vision.capture()  # the screen may have changed while "reacting"
@@ -203,7 +205,16 @@ class Bot:
         self.mouse.maybe_distract(log.info)
         return between(self.rng, self.cfg["human"]["poll_s"])
 
-    def pick_card(self):
+    def scroll_point(self, frame, marker=None):
+        """Where to scroll the friend list. "auto": same column as the list's title (works in any
+        layout, wide fullscreen or portrait window), a bit below the middle of the window."""
+        pos = self.cfg["card"]["scroll_pos"]
+        if isinstance(pos, (list, tuple)):
+            return frame.relative(*pos)
+        x = marker.x if marker else frame.relative(0.5, 0)[0]
+        return x, frame.relative(0, 0.55)[1]
+
+    def pick_card(self, marker=None):
         c = self.cfg["card"]
         frame = None
         for i in range(c["scroll_attempts"] + 1):
@@ -219,7 +230,7 @@ class Bot:
                 self.card_pause_until = self.now() + timedelta(seconds=20)
                 return between(self.rng, (1.5, 2.5))
             if i < c["scroll_attempts"]:
-                self.mouse.scroll(*frame.relative(*c["scroll_pos"]), c["scroll_amount"])
+                self.mouse.scroll(*self.scroll_point(frame, marker), c["scroll_amount"])
                 self.sleep(self.rng.uniform(0.8, 1.4))
 
         self.card_failures += 1
@@ -235,7 +246,7 @@ class Bot:
             log.info("refreshing the friend list")
             self.mouse.click(m.x, m.y, m.w, m.h)
         elif frame is not None:  # scroll back to the top
-            self.mouse.scroll(*frame.relative(*c["scroll_pos"]), -c["scroll_amount"] * (c["scroll_attempts"] + 2))
+            self.mouse.scroll(*self.scroll_point(frame, marker), -c["scroll_amount"] * (c["scroll_attempts"] + 2))
         return between(self.rng, (20, 40))
 
     # ------------------------------------------------------------ main loop

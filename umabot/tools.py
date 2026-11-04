@@ -125,9 +125,24 @@ class _NullMouse:
         return lambda *a, **k: None
 
 
+def ensure_scale(v, f):
+    """Makes sure the UI scale of this window size is known. Returns (frame, description)."""
+    if v.fixed_scale is not None:
+        return f, f"{v.fixed_scale:.3f} (fixed in config.toml)"
+    if v.calibrated:
+        return f, f"{v.scale:.3f} (measured before for {f.rect[2]}x{f.rect[3]})"
+    if v.maybe_calibrate(f, force=True):
+        return v.make_frame(f.raw, f.rect), f"{v.scale:.3f} (measured now)"
+    guess = v.scale_guess(f.rect[2], f.rect[3])
+    return f, (f"{guess:.3f} (GUESS: no known button on screen to measure it; run 'test' "
+               f"on a screen with a Next/OK/Close button once)")
+
+
 def test(cfg):
     v, f = _capture(cfg)
-    print(f"Window: {f.rect[2]}x{f.rect[3]} at ({f.rect[0]},{f.rect[1]}), normalised to {f.img.shape[1]}x{f.img.shape[0]}\n")
+    f, scale = ensure_scale(v, f)
+    print(f"Window: {f.rect[2]}x{f.rect[3]} at ({f.rect[0]},{f.rect[1]})")
+    print(f"UI scale: {scale}\n")
     annotated = f.img.copy()
     rows = []
     for name in v.templates:
@@ -157,33 +172,44 @@ def test(cfg):
     print(f"Annotated screenshot: {path}")
 
 
+def save_crop(raw, box, scale, dest):
+    """Saves raw[box] converted to the reference scale, so it works at any window size."""
+    x, y, w, h = box
+    piece = raw[y:y + h, x:x + w]
+    if abs(scale - 1) > 0.005:
+        size = (max(1, round(w / scale)), max(1, round(h / scale)))
+        piece = cv2.resize(piece, size, interpolation=cv2.INTER_AREA if scale > 1 else cv2.INTER_CUBIC)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    cv2.imencode(".png", piece)[1].tofile(dest)
+    return piece.shape[1], piece.shape[0]
+
+
 def crop(cfg, name, file=None):
     """Shows a screenshot of the game (or of a file) and saves the area you select."""
-    ref_w = cfg["game"]["reference_resolution"][0]
     if file:
-        img = cv2.imdecode(np.fromfile(file, np.uint8), cv2.IMREAD_COLOR)
-        if img is None:
+        raw = cv2.imdecode(np.fromfile(file, np.uint8), cv2.IMREAD_COLOR)
+        if raw is None:
             sys.exit(f"Couldn't open {file}")
-        if img.shape[1] != ref_w:
-            img = cv2.resize(img, (ref_w, round(img.shape[0] * ref_w / img.shape[1])), interpolation=cv2.INTER_AREA)
+        v = Vision(cfg)
+        f = v.make_frame(raw)
     else:
         print("Switch to the game, screenshot in 3 seconds...")
         time.sleep(3)
-        _, f = _capture(cfg)
-        img = f.img
-    k = min(1.0, 1500 / img.shape[1], 850 / img.shape[0])
-    small = cv2.resize(img, None, fx=k, fy=k) if k < 1 else img
+        v, f = _capture(cfg)
+    f, scale = ensure_scale(v, f)
+    print(f"UI scale: {scale}")
+    raw = f.raw
+    k = min(1.0, 1500 / raw.shape[1], 850 / raw.shape[0])
+    small = cv2.resize(raw, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else raw
     print("Drag a rectangle around the button and press ENTER (C cancels).")
     x, y, w, h = cv2.selectROI(f"Crop: {name}", small, showCrosshair=True)
     cv2.destroyAllWindows()
     if w == 0 or h == 0:
         sys.exit("Cancelled.")
-    x, y, w, h = (round(v / k) for v in (x, y, w, h))
-    folder = os.path.join(cfg["_base"], "templates")
-    os.makedirs(folder, exist_ok=True)
-    dest = os.path.join(folder, name + ".png")
-    cv2.imencode(".png", img[y:y + h, x:x + w])[1].tofile(dest)
-    print(f"Saved {dest} ({w}x{h})")
+    box = tuple(round(val / k) for val in (x, y, w, h))
+    dest = os.path.join(cfg["_base"], "templates", name + ".png")
+    sw, sh = save_crop(raw, box, f.k, dest)
+    print(f"Saved {dest} ({sw}x{sh} at reference scale)")
 
 
 def position(cfg):

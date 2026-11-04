@@ -6,3 +6,4 @@ templates/_downloaded/
 build/
 dist/
 *.spec
+calibration.json

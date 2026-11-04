@@ -4,7 +4,11 @@
 
 [game]
 window = "Umamusume"                 # game window title
-reference_resolution = [1920, 1080]  # size the templates were cropped at (the bot rescales on its own)
+# The game can run at any resolution, windowed or fullscreen, on any monitor.
+# Templates are kept at the scale of a 1920x1080 fullscreen game; the bot measures the UI scale of
+# your window on its own (once per window size, saved in calibration.json).
+reference_resolution = [1920, 1080]
+scale = "auto"                       # "auto", or a fixed number (e.g. 0.75) if auto ever gets it wrong
 threshold = 0.85                     # minimum similarity (0-1) to consider a button visible
 
 [game.thresholds]                    # per-template thresholds, if one needs to be stricter/looser
@@ -33,7 +37,7 @@ wait_min = [25, 45]             # out of TP: wait this long before trying again 
 templates = ["card_light_hello", "card_light_hello_full"]
 threshold = 0.75
 scales = [0.4, 1.8]             # the web image is searched at several sizes
-scroll_pos = [0.30, 0.55]       # where to scroll the list (fraction of the window; see "position")
+scroll_pos = "auto"             # where to scroll the list: "auto" (below its title) or [x, y] fractions (see "position")
 scroll_amount = -5
 scroll_attempts = 6
 refresh = "refresh"             # friend list refresh button (optional)

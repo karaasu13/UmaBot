@@ -8,6 +8,7 @@ DEFAULTS = {
     "game": {
         "window": "Umamusume",
         "reference_resolution": [1920, 1080],
+        "scale": "auto",
         "threshold": 0.85,
         "thresholds": {},
     },
@@ -32,7 +33,7 @@ DEFAULTS = {
         "templates": ["card_light_hello", "card_light_hello_full"],
         "threshold": 0.75,
         "scales": [0.4, 1.8],
-        "scroll_pos": [0.30, 0.55],
+        "scroll_pos": "auto",
         "scroll_amount": -5,
         "scroll_attempts": 6,
         "refresh": "refresh",

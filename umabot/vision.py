@@ -1,14 +1,20 @@
 """Finding the game window, taking screenshots and looking for templates.
 
-Screenshots are normalised to `reference_resolution` (e.g. 1920x1080), so templates keep
-working even if the window has another size (as long as the aspect ratio is the same).
+Templates are stored at the UI scale of a 1920x1080 fullscreen game ("reference scale").
+The game can run at any resolution, windowed or fullscreen: the bot measures the UI scale of
+the current window size (and remembers it in calibration.json), then rescales every
+screenshot to the reference scale before matching.
 """
+import json
 import os
 import sys
+import time
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
+
+from .logger import log
 
 
 @dataclass
@@ -68,12 +74,13 @@ def enable_dpi_awareness():
 
 # ---------------------------------------------------------------- frames
 class Frame:
-    """A normalised screenshot + a cache of the searches done on it."""
+    """A screenshot rescaled to the reference scale + a cache of the searches done on it."""
 
-    def __init__(self, img, rect, vision):
-        self.img = img
-        self.rect = rect                    # real (left, top, w, h)
-        self.k = rect[2] / img.shape[1]     # real px per normalised px
+    def __init__(self, img, rect, vision, raw=None):
+        self.img = img                          # at reference scale (what templates are matched on)
+        self.raw = img if raw is None else raw  # as captured
+        self.rect = rect                        # real (left, top, w, h)
+        self.k = rect[2] / img.shape[1]         # real px per reference px (= UI scale)
         self.vision = vision
         self._cache = {}
         self._small = None
@@ -100,21 +107,32 @@ class Frame:
         return round(self.rect[0] + fx * self.rect[2]), round(self.rect[1] + fy * self.rect[3])
 
     def is_black(self):
-        return float(self.img.mean()) < 3
+        return float(self.raw.mean()) < 3
 
 
 class Vision:
-    def __init__(self, cfg, source=None):
+    def __init__(self, cfg, source=None, clock=time.monotonic):
+        g = cfg["game"]
         self.cfg = cfg
-        self.ref_w = cfg["game"]["reference_resolution"][0]
-        self.threshold = cfg["game"]["threshold"]
-        self.thresholds = cfg["game"].get("thresholds", {})
+        self.ref_w, self.ref_h = g["reference_resolution"]
+        self.threshold = g["threshold"]
+        self.thresholds = g.get("thresholds", {})
+        scale = str(g.get("scale", "auto")).strip().lower()
+        self.fixed_scale = None if scale == "auto" else float(scale)
         self.templates = load_templates(cfg["_base"])
+        self.card_names = set(cfg["card"]["templates"])
         self.source = source or self._capture_window
+        self.clock = clock
         self.hwnd = None
         self._sct = None
         self._card_scale = {}
         self._small = {}
+        # UI scale per window size
+        self.calibration_path = os.path.join(cfg["_base"], "calibration.json")
+        self._calibration = self._load_calibration()
+        self._size = None
+        self.scale = None
+        self._next_sweep, self._sweep_fails = 0.0, 0
 
     # -- capture
     def _capture_window(self):
@@ -135,12 +153,17 @@ class Vision:
         r = self.source()
         if r is None:
             return None
-        img, rect = r
-        scale = self.ref_w / img.shape[1]
-        if abs(scale - 1) > 0.005:
-            interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-            img = cv2.resize(img, (self.ref_w, round(img.shape[0] * scale)), interpolation=interp)
-        return Frame(img, rect, self)
+        raw, rect = r
+        return self.make_frame(raw, rect)
+
+    def make_frame(self, raw, rect=None):
+        rect = rect or (0, 0, raw.shape[1], raw.shape[0])
+        s = self.current_scale(rect[2], rect[3])
+        img = raw
+        if abs(s - 1) > 0.005:
+            size = (max(1, round(raw.shape[1] / s)), max(1, round(raw.shape[0] / s)))
+            img = cv2.resize(raw, size, interpolation=cv2.INTER_AREA if s > 1 else cv2.INTER_LINEAR)
+        return Frame(img, rect, self, raw=raw)
 
     def bring_to_front(self):
         """If another window is on top of the game, the clicks would land there."""
@@ -154,6 +177,103 @@ class Vision:
         except Exception:
             pass
 
+    # -- UI scale
+    @property
+    def calibrated(self):
+        return self.fixed_scale is not None or self.scale is not None
+
+    def scale_guess(self, w, h):
+        """The game's UI follows the window height (true for 16:9 at any size)."""
+        return h / self.ref_h
+
+    def current_scale(self, w, h):
+        if self.fixed_scale is not None:
+            return self.fixed_scale
+        key = f"{w}x{h}"
+        if key != self._size:  # new window size: use what we measured before, if anything
+            self._size = key
+            self.scale = self._calibration.get(key)
+            self._next_sweep, self._sweep_fails = 0.0, 0
+        return self.scale or self.scale_guess(w, h)
+
+    def _load_calibration(self):
+        try:
+            with open(self.calibration_path, encoding="utf-8") as f:
+                return {k: float(v) for k, v in json.load(f).items()}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _set_scale(self, s, why):
+        self.scale = s
+        self._calibration[self._size] = round(s, 4)
+        try:
+            with open(self.calibration_path, "w", encoding="utf-8") as f:
+                json.dump(self._calibration, f, indent=2)
+        except OSError:
+            pass
+        log.info(f"UI scale for a {self._size} window: {s:.3f} ({why})")
+
+    def _refine_scale(self, raw, name, s0, cx, cy):
+        """Best scale (and score) for template `name` around raw point (cx, cy), within ±6% of s0."""
+        tpl = self.templates[name]
+        best = (0.0, s0)
+        for s in np.linspace(s0 * 0.94, s0 * 1.06, 13):
+            t = cv2.resize(tpl, None, fx=s, fy=s, interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR)
+            th, tw = t.shape[:2]
+            x0, y0 = max(0, round(cx - tw / 2 - 12)), max(0, round(cy - th / 2 - 12))
+            val, _ = similarity(raw[y0:y0 + th + 24, x0:x0 + tw + 24], t)
+            if val > best[0]:
+                best = (val, float(s))
+        return best
+
+    def _lock_scale(self, frame, name, m):
+        """A template was seen with the guessed scale: measure the exact scale on it and keep it."""
+        val, s = self._refine_scale(frame.raw, name, frame.k, m.x - frame.rect[0], m.y - frame.rect[1])
+        if val >= self.thresholds.get(name, self.threshold):
+            self._set_scale(s, f"confirmed on '{name}'")
+
+    def maybe_calibrate(self, frame, force=False):
+        """While the UI scale is unknown, look for any known template at many scales.
+        Rate-limited (20 s, backing off to 2 min), since it's heavier than a normal cycle."""
+        if self.calibrated:
+            return True
+        now = self.clock()
+        if not force and now < self._next_sweep:
+            return False
+        if self._sweep(frame):
+            return True
+        self._sweep_fails += 1
+        self._next_sweep = now + min(120, 20 * 2 ** (self._sweep_fails - 1))
+        return False
+
+    def _sweep(self, frame):
+        names = [n for n in self.templates if n not in self.card_names]
+        if not names:
+            return False
+        raw_small = shrink(frame.raw)
+        w, h = frame.rect[2], frame.rect[3]
+        scales = [h / self.ref_h, w / self.ref_w] + list(np.geomspace(0.3, 2.2, 36))
+        best = {}  # name -> (score, scale, loc)
+        for s in scales:
+            for n in names:
+                t = cv2.resize(self._small_template(n), None, fx=s, fy=s,
+                               interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR)
+                if min(t.shape[:2]) < 8:
+                    continue
+                val, loc = similarity(raw_small, t)
+                if val > best.get(n, (0,))[0]:
+                    best[n] = (val, float(s), loc)
+        for n, (val, s, loc) in sorted(best.items(), key=lambda kv: -kv[1][0])[:3]:
+            if val < 0.6:
+                break
+            th, tw = self.templates[n].shape[:2]
+            cx, cy = loc[0] * 2 + tw * s / 2, loc[1] * 2 + th * s / 2
+            fval, fs = self._refine_scale(frame.raw, n, s, cx, cy)
+            if fval >= self.thresholds.get(n, self.threshold):
+                self._set_scale(fs, f"measured on '{n}'")
+                return True
+        return False
+
     # -- search
     def has(self, name):
         return name in self.templates
@@ -164,7 +284,7 @@ class Vision:
         return self._small[name]
 
     def measure(self, frame, name):
-        """(score, top-left corner, (h, w)) of the best match, in normalised coordinates."""
+        """(score, top-left corner, (h, w)) of the best match, in reference coordinates."""
         tpl = self.templates.get(name)
         if tpl is None:
             return 0.0, (0, 0), (0, 0)
@@ -178,6 +298,8 @@ class Vision:
             return None
         m = frame.to_screen(loc[0] + w / 2, loc[1] + h / 2, w, h)
         m.score = val
+        if not self.calibrated and name not in self.card_names:
+            self._lock_scale(frame, name, m)
         return m
 
     def score(self, frame, name):
