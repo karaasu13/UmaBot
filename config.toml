@@ -34,7 +34,8 @@ poll_s = [0.8, 1.8]             # time between screenshots
 wait_min = [25, 45]             # out of TP: wait this long before trying again (no TP is ever wasted)
 
 [card]
-templates = ["card_light_hello", "card_light_hello_full"]
+# Which card to borrow is chosen in the app (or with "card"); it's saved in settings.json.
+templates = ["card", "card_full"]
 threshold = 0.75
 scales = [0.4, 1.8]             # the web image is searched at several sizes
 scroll_pos = "auto"             # where to scroll the list: "auto" (below its title) or [x, y] fractions (see "position")
@@ -89,7 +90,7 @@ if_seen = ["title_screen"]
 action = "center"
 
 [[rule]]
-name = "Pick Light Hello"
+name = "Pick the support card"
 if_seen = ["friend_list"]
 action = "card"
 

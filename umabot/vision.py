@@ -381,14 +381,20 @@ def similarity(img, tpl):
 
 
 def load_templates(base):
-    """templates/_downloaded/*.png, then templates/*.png (your own crops win on name clashes)."""
+    """templates/_downloaded (fallback buttons), templates/ (the crops) and templates/_card (the chosen
+    support card). Later folders win on name clashes."""
     out = {}
-    for folder in (os.path.join(base, "templates", "_downloaded"), os.path.join(base, "templates")):
+    t = os.path.join(base, "templates")
+    for folder in (os.path.join(t, "_downloaded"), t, os.path.join(t, "_card")):
         if not os.path.isdir(folder):
             continue
         for f in sorted(os.listdir(folder)):
-            if f.lower().endswith(".png"):
-                img = cv2.imdecode(np.fromfile(os.path.join(folder, f), np.uint8), cv2.IMREAD_COLOR)
+            path = os.path.join(folder, f)
+            if f.lower().endswith(".png") and os.path.getsize(path) > 0:
+                try:
+                    img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
+                except cv2.error:
+                    img = None  # corrupt file: ignore it
                 if img is not None:
                     out[f[:-4]] = img
     return out

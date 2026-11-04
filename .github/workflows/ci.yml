@@ -13,8 +13,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install opencv-python-headless numpy pytest
+      - run: pip install opencv-python-headless numpy pytest customtkinter pillow
       - run: python -m pytest -q
+      - name: Build the app window on a virtual display
+        run: |
+          sudo apt-get install -y -q xvfb > /dev/null
+          xvfb-run -a python -m umabot selftest
 
   windows-exe:
     needs: tests
@@ -25,19 +29,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --onefile --name UmaBot --icon assets/icon.ico --collect-submodules umabot run.py
+      - name: Build UmaBot.exe
+        run: pyinstaller --onefile --windowed --name UmaBot --icon assets/icon.ico --add-data "assets;assets" --collect-all customtkinter --collect-submodules umabot run.py
       - name: Smoke-test the .exe
+        shell: pwsh
         run: |
-          copy config.toml dist\
-          dist\UmaBot.exe --help
-          dist\UmaBot.exe check
-          dist\UmaBot.exe schedule
+          Copy-Item config.toml dist/
+          $p = Start-Process -FilePath dist/UmaBot.exe -ArgumentList "selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
+          $p = Start-Process -FilePath dist/UmaBot.exe -ArgumentList "schedule" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "schedule failed with exit code $($p.ExitCode)" }
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force package/templates | Out-Null
-          Copy-Item dist/UmaBot.exe, config.toml, README.md package/
-          Copy-Item templates/README.md package/templates/
+          Copy-Item dist/UmaBot.exe, config.toml package/
           Get-ChildItem templates -Filter *.png -ErrorAction SilentlyContinue | Copy-Item -Destination package/templates/
       - uses: actions/upload-artifact@v4
         with:
@@ -61,8 +67,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
+          mkdir -p package/templates
           (cd package && zip -qr ../UmaBot-windows.zip .)
           gh release delete latest --repo "$REPO" --yes --cleanup-tag || true
           gh release create latest UmaBot-windows.zip --repo "$REPO" \
             --title "UmaBot (latest build)" --target "$GITHUB_SHA" \
-            --notes "Windows build of ${GITHUB_SHA::7}. Unzip it and double-click UmaBot.exe."
+            --notes "Windows build of ${GITHUB_SHA::7}. Unzip it and open UmaBot.exe."

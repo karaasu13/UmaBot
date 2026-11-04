@@ -55,7 +55,8 @@ def prepare_rules(rules, has, card_templates):
 
 
 class Bot:
-    def __init__(self, cfg, vision=None, mouse=None, now=datetime.now, sleep=time.sleep, rng=None):
+    def __init__(self, cfg, vision=None, mouse=None, now=datetime.now, sleep=time.sleep, rng=None,
+                 should_stop=lambda: False):
         self.cfg = cfg
         self.rng = rng or random.Random()
         self.vision = vision or Vision(cfg)
@@ -63,6 +64,7 @@ class Bot:
         self.schedule = Schedule(cfg["schedule"])
         self.now = now
         self.sleep = sleep
+        self.should_stop = should_stop
         self.rules = prepare_rules(cfg["rule"], self.vision.has, cfg["card"]["templates"])
         self.logs_dir = os.path.join(cfg["_base"], "logs")
         self.last, self.repeats = None, 0
@@ -70,8 +72,16 @@ class Bot:
         self.unknown_since, self.saved_unknown = None, False
         self.card_pause_until, self.card_failures = None, 0
         self.prev_state, self.no_window = None, False
+        self.status, self.status_kind = "Starting", "ok"  # kind: ok | wait | stop | error
 
     # ------------------------------------------------------------ helpers
+    def set_status(self, text, kind="ok"):
+        self.status, self.status_kind = text, kind
+
+    @property
+    def card_name(self):
+        return self.cfg["card"].get("name") or "the support card"
+
     def webhook(self):
         return self.cfg["safety"]["discord_webhook"]
 
@@ -86,12 +96,11 @@ class Bot:
         return path
 
     def summary(self):
-        for r in self.rules:
-            if r.enabled:
-                extra = f" (ignoring missing: {', '.join(r.missing)})" if r.missing else ""
-                log.info(f"  [on]  {r.name}{extra}")
-            else:
-                log.info(f"  [off] {r.name} -> missing: {', '.join(r.missing)}")
+        ready = [r for r in self.rules if r.enabled]
+        log.info(f"screens ready: {len(ready)}/{len(self.rules)}")
+        off = [r.name for r in self.rules if not r.enabled]
+        if off:
+            log.info("not set up yet (skipped): " + "; ".join(off))
 
     # ------------------------------------------------------------ decision
     def evaluate(self, frame, block_run_start=False):
@@ -127,6 +136,12 @@ class Bot:
             text = {"active": "playing", "break": "on a break", "off": "off hours"}[state]
             log.info(f"-- {text}" + (f" until {until:%d/%m %H:%M}" if until else ""))
             self.prev_state = state
+        if state == "break":
+            self.set_status(f"On a break until {until:%H:%M}", "wait")
+        elif state == "off":
+            self.set_status(f"Off hours until {until:%H:%M}", "wait")
+        else:
+            self.set_status("Playing")
         if state == "break" or (state == "off" and not self.cfg["schedule"]["finish_run_after_hours"]):
             return min(300.0, max(5.0, (until - now).total_seconds()))
 
@@ -135,10 +150,12 @@ class Bot:
             if not self.no_window:
                 log.info("game window not found (is it open? minimised?)")
                 self.no_window = True
+            self.set_status("Waiting for the game window", "wait")
             return 15
         self.no_window = False
         if frame.is_black():
             log.info("black screen: is the PC locked or the game minimised?")
+            self.set_status("Black screen (PC locked?)", "wait")
             return 30
 
         r, target = self.evaluate(frame, block_run_start=(state != "active"))
@@ -157,6 +174,7 @@ class Bot:
         self.last = key
         if r.action != "card" and self.repeats > self.cfg["safety"]["max_repeats"]:
             path = self.save_screenshot(frame, "stuck")
+            self.set_status("Stopped: stuck on the same screen", "error")
             notify(self.webhook(), f"'{r.name}' repeated {self.repeats - 1}x without the screen changing. Stopped. ({path})")
             return None
         return self.execute(r, target, frame)
@@ -175,12 +193,15 @@ class Bot:
     def execute(self, r, target, frame):
         if r.action == "stop":
             path = self.save_screenshot(frame, "stop")
+            self.set_status(f"Stopped: {r.name}", "error")
             notify(self.webhook(), f"stopped: '{r.name}' ({path})")
             return None
         if r.action == "card":
             return self.pick_card(frame.find(r.if_seen[0]) if r.if_seen else None)
 
         self.mouse.react()
+        if self.should_stop():
+            return None
         frame = self.vision.capture()  # the screen may have changed while "reacting"
         if frame is None:
             return 2
@@ -201,6 +222,7 @@ class Bot:
         if r.action == "wait_tp":
             mins = between(self.rng, self.cfg["tp"]["wait_min"])
             log.info(f"out of TP, trying again in {mins:.0f} min")
+            self.set_status(f"Out of TP, retrying at {self.now() + timedelta(minutes=mins):%H:%M}", "wait")
             return mins * 60
         self.mouse.maybe_distract(log.info)
         return between(self.rng, self.cfg["human"]["poll_s"])
@@ -218,13 +240,17 @@ class Bot:
         c = self.cfg["card"]
         frame = None
         for i in range(c["scroll_attempts"] + 1):
+            if self.should_stop():
+                return None
             frame = self.vision.capture()
             if frame is None:
                 return 5
             m = self.vision.find_card(frame, c["templates"], c["scales"], c["threshold"])
             if m:
                 self.mouse.react()
-                log.info(f"Light Hello found (similarity {m.score:.2f})")
+                if self.should_stop():
+                    return None
+                log.info(f"{self.card_name} found (similarity {m.score:.2f})")
                 self.mouse.click(m.x, m.y, m.w, m.h)
                 self.card_failures = 0
                 self.card_pause_until = self.now() + timedelta(seconds=20)
@@ -234,10 +260,11 @@ class Bot:
                 self.sleep(self.rng.uniform(0.8, 1.4))
 
         self.card_failures += 1
-        log.info(f"Light Hello not found ({self.card_failures}/{c['max_failures']})")
+        log.info(f"{self.card_name} not found ({self.card_failures}/{c['max_failures']})")
         if self.card_failures >= c["max_failures"]:
             path = self.save_screenshot(frame, "no_card")
-            notify(self.webhook(), f"couldn't find Light Hello {self.card_failures}x in a row. Stopped. ({path})")
+            self.set_status(f"Stopped: {self.card_name} not in the friend list", "error")
+            notify(self.webhook(), f"couldn't find {self.card_name} {self.card_failures}x in a row. Stopped. ({path})")
             return None
         frame = self.vision.capture()
         m = frame.find(c["refresh"]) if frame is not None and c.get("refresh") else None
@@ -251,11 +278,11 @@ class Bot:
 
     # ------------------------------------------------------------ main loop
     def run(self):
-        log.info(f"UmaBot starting. {len(self.vision.templates)} templates loaded. Rules:")
+        log.info(f"UmaBot starting, borrowing {self.card_name}.")
         self.summary()
-        log.info("To stop: Ctrl+C, or fling the mouse to the top-left corner of the screen.")
+        log.info("To stop: press Stop, or fling the mouse to the top-left corner of the screen.")
         errors = 0
-        while True:
+        while not self.should_stop():
             try:
                 wait = self.step()
                 errors = 0
@@ -265,9 +292,12 @@ class Bot:
                 errors += 1
                 log.info("error:\n" + traceback.format_exc())
                 if errors >= 20:
+                    self.set_status("Stopped: too many errors", "error")
                     notify(self.webhook(), "20 errors in a row, stopped. See logs/umabot.log")
                     return
                 wait = 10
             if wait is None:
-                return
+                break
             self.sleep(wait)
+        if self.should_stop():
+            self.set_status("Stopped", "stop")

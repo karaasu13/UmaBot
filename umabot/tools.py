@@ -1,20 +1,22 @@
-"""Helper commands: download, check, test, crop, position, schedule."""
+"""Commands: card, test, schedule, plus the advanced ones (download, check, crop, position)."""
 import os
+import re
 import sys
 import time
 import urllib.request
 from datetime import date, datetime, timedelta
+from html import unescape
 
 import cv2
 import numpy as np
 
-from .config import cli_name
+from .config import cli_name, save_settings
 from .engine import Bot, prepare_rules
 from .schedule import Schedule
 from .vision import Vision, load_templates
 
-# Generic buttons from the open-source project umamusume-auto-train (Steam, 1920x1080),
-# pinned to a commit so they never change. They are downloaded to your PC, not stored in this repo.
+# Fallback generic buttons from the open-source project umamusume-auto-train (Steam, 1920x1080),
+# pinned to a commit so they never change. Only used for buttons missing from templates/.
 UPSTREAM = ("https://raw.githubusercontent.com/samsulpanjul/umamusume-auto-train/"
             "4b70b185bf1153769e8536e0d6737f0bebc8892c/assets/")
 BUTTONS = {
@@ -31,62 +33,164 @@ BUTTONS = {
     "back": "buttons/back_btn.png",
     "career_lobby": "ui/tazuna_hint.png",
 }
-# Icon of the SSR Light Hello [From the Ground Up] support card (GameTora, id 30052)
-CARD_URLS = [
-    "https://gametora.com/images/umamusume/supports/support_card_s_30052.png",
-    "https://media.gametora.com/umamusume/supports/full/small/30052.png",
-]
+
+# Support cards: icons come from GameTora, by card ID (10xxx = R, 20xxx = SR, 30xxx = SSR)
+GAMETORA_PAGE = "https://gametora.com/umamusume/supports/{id}"
+CARD_IMAGE_URLS = (
+    "https://gametora.com/images/umamusume/supports/support_card_s_{id}.png",
+    "https://media.gametora.com/umamusume/supports/full/small/{id}.png",
+)
+EXAMPLE_CARD = "https://gametora.com/umamusume/supports/30052-light-hello"
 
 
-def _fetch(url, dest):
+def _get(url, limit=None):
     req = urllib.request.Request(url, headers={"User-Agent": "UmaBot/1.0"})
     with urllib.request.urlopen(req, timeout=20) as r:
-        data = r.read()
-    with open(dest, "wb") as f:
-        f.write(data)
-    return data
+        return r.read(limit) if limit else r.read()
 
 
-def download(cfg):
+def _write_png(img, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    cv2.imencode(".png", img)[1].tofile(path)
+
+
+# ---------------------------------------------------------------- support card
+def parse_card(text):
+    """GameTora link, 5-digit card ID or path to a .png -> (card_id or None, name hint, png path or None)."""
+    text = text.strip().strip('"').strip("'")
+    if text.lower().endswith(".png"):
+        if not os.path.isfile(text):
+            raise ValueError(f"file not found: {text}")
+        return None, os.path.splitext(os.path.basename(text))[0].replace("_", " "), text
+    m = re.search(r"supports/(\d{5})(?:-([A-Za-z0-9-]+))?", text)
+    if m:
+        return int(m.group(1)), (m.group(2) or "").replace("-", " ").title(), None
+    if re.fullmatch(r"\d{5}", text):
+        return int(text), "", None
+    raise ValueError("that's not a GameTora support card link, a 5-digit card ID or a .png file")
+
+
+def card_title(card_id):
+    """Card name from its GameTora page, e.g. 'Light Hello (SSR)'. Best effort, '' if it fails."""
+    try:
+        html = _get(GAMETORA_PAGE.format(id=card_id), limit=400_000).decode("utf-8", "ignore")
+        m = re.search(r"<title[^>]*>(.*?)</title>", html, re.S | re.I)
+        title = unescape(m.group(1)).strip() if m else ""
+        return re.split(r"\s+Support Card|\s+[|–-]\s+", title)[0].strip()
+    except Exception:
+        return ""
+
+
+def card_core(img):
+    """Middle of a card icon, without the frame and the rarity/level/limit-break overlays."""
+    h, w = img.shape[:2]
+    return img[int(h * 0.12):int(h * 0.70), int(w * 0.15):int(w * 0.85)]
+
+
+def set_card(cfg, text):
+    """Chooses the support card to borrow: gets its icon (or uses a .png) and saves the choice."""
+    base = cfg["_base"]
+    card_id, hint, path = parse_card(text)
+    if path:
+        img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError(f"couldn't read {path}")
+        name = hint
+    else:
+        img, error = None, None
+        for url in CARD_IMAGE_URLS:
+            try:
+                img = cv2.imdecode(np.frombuffer(_get(url.format(id=card_id)), np.uint8), cv2.IMREAD_COLOR)
+                if img is not None:
+                    break
+            except Exception as e:
+                error = e
+        if img is None:
+            raise ValueError(f"couldn't download the card's icon ({error}). "
+                             "Save a picture of the card yourself and give me the .png instead.")
+        name = card_title(card_id) or hint or f"card {card_id}"
+
+    folder = os.path.join(base, "templates", "_card")
+    if os.path.isdir(folder):
+        for f in os.listdir(folder):
+            if f.lower().endswith(".png"):
+                os.remove(os.path.join(folder, f))
+    if path:
+        _write_png(img, os.path.join(folder, "card.png"))  # your own picture, used as it is
+    else:
+        _write_png(img, os.path.join(folder, "card_full.png"))
+        _write_png(card_core(img), os.path.join(folder, "card.png"))
+    save_settings(base, {"card": {"id": card_id or 0, "name": name}})
+    cfg["card"]["id"], cfg["card"]["name"] = card_id or 0, name
+    return name
+
+
+def has_card(cfg):
+    tpls = load_templates(cfg["_base"])
+    return any(t in tpls for t in cfg["card"]["templates"])
+
+
+def choose_card(cfg):
+    """Asks which support card the bot should borrow."""
+    current = cfg["card"].get("name") if has_card(cfg) else ""
+    print("\nWhich support card should the bot borrow from the friend list?")
+    print("Find it on GameTora and paste its link, for example")
+    print(f"  {EXAMPLE_CARD}")
+    print("or type its ID (e.g. 30052), or the path to a .png picture of the card.")
+    if current:
+        print(f"(Enter keeps the current one: {current})")
+    while True:
+        try:
+            text = input("> ").strip()
+        except EOFError:
+            return current
+        if not text:
+            if current:
+                return current
+            continue
+        try:
+            name = set_card(cfg, text)
+            print(f"Support card set: {name}")
+            return name
+        except ValueError as e:
+            print(f"  {e}")
+
+
+# ---------------------------------------------------------------- fallback buttons
+def missing_fallback(cfg):
+    folder = os.path.join(cfg["_base"], "templates", "_downloaded")
+    return [n for n in BUTTONS if not os.path.isfile(os.path.join(folder, n + ".png"))
+            or os.path.getsize(os.path.join(folder, n + ".png")) == 0]
+
+
+def download(cfg, quiet=False, only_missing=False):
+    """Downloads the fallback generic buttons (only used for the ones missing from templates/)."""
     folder = os.path.join(cfg["_base"], "templates", "_downloaded")
     os.makedirs(folder, exist_ok=True)
+    names = missing_fallback(cfg) if only_missing else list(BUTTONS)
     ok = 0
-    for name, rel in BUTTONS.items():
+    for name in names:
         try:
-            _fetch(UPSTREAM + rel, os.path.join(folder, name + ".png"))
-            print(f"  ok     {name}")
+            data = _get(UPSTREAM + BUTTONS[name])
+            tmp = os.path.join(folder, name + ".part")
+            with open(tmp, "wb") as f:
+                f.write(data)
+            os.replace(tmp, os.path.join(folder, name + ".png"))  # never leaves a half-written file
             ok += 1
+            if not quiet:
+                print(f"  ok     {name}")
         except Exception as e:
             print(f"  ERROR  {name}: {e}")
-    img, error = None, None
-    for url in CARD_URLS:
-        try:
-            data = _fetch(url, os.path.join(folder, "card_light_hello_full.png"))
-            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-            if img is not None:
-                break
-        except Exception as e:
-            error = e
-    if img is not None:
-        h, w = img.shape[:2]
-        core = img[int(h * 0.12):int(h * 0.70), int(w * 0.15):int(w * 0.85)]  # without frame/icons
-        cv2.imencode(".png", core)[1].tofile(os.path.join(folder, "card_light_hello.png"))
-        print(f"  ok     card_light_hello (+ _full), icon {w}x{h}")
-        ok += 1
-    else:
-        print(f"  ERROR  Light Hello card: {error}")
-        print("         Save the card image from https://gametora.com/umamusume/supports/30052-light-hello")
-        print("         as templates/card_light_hello.png, or crop it from the in-game friend list.")
-    print(f"\n{ok} images in {folder}")
-    print(f"Next:  {cli_name()} check")
+    if not quiet:
+        print(f"\n{ok} images in {folder}")
+    return ok
 
 
+# ---------------------------------------------------------------- diagnostics
 def check(cfg):
     base = cfg["_base"]
     tpls = load_templates(base)
-    own_dir = os.path.join(base, "templates")
-    own = {f[:-4] for f in os.listdir(own_dir) if f.endswith(".png")} if os.path.isdir(own_dir) else set()
-    print(f"Templates: {len(tpls)} ({len(own)} cropped by you, {len(tpls) - len(own)} downloaded)\n")
+    print(f"Templates: {len(tpls)}  |  support card: {cfg['card'].get('name') or '(not chosen)'}\n")
     rules = prepare_rules(cfg["rule"], lambda n: n in tpls, cfg["card"]["templates"])
     missing = []
     for r in rules:
@@ -95,19 +199,14 @@ def check(cfg):
         missing += [t for t in r.missing if t not in missing]
     cards = cfg["card"]["templates"]
     downloadable = [t for t in missing if t in BUTTONS]
-    if downloadable:
-        missing = [t for t in missing if t not in BUTTONS]
-        print(f"\nNot downloaded yet ({', '.join(downloadable)}):")
-        print(f"  {cli_name()} download")
     card_missing = any(t in cards for t in missing)
+    missing = [t for t in missing if t not in BUTTONS and t not in cards]
+    if downloadable:
+        print(f"\nNot downloaded yet ({', '.join(downloadable)}):  {cli_name()} download")
     if card_missing:
-        missing = [t for t in missing if t not in cards]
-        print("\nLight Hello card missing: run 'download', or crop it from the friend list with")
-        print(f"  {cli_name()} crop {cards[0]}")
+        print(f"\nSupport card not chosen yet:  {cli_name()} card")
     if missing:
-        print("\nTo crop (with the game open):")
-        for t in missing:
-            print(f"  {cli_name()} crop {t}")
+        print(f"\nTemplates still missing: {', '.join(missing)}")
     if not (missing or downloadable or card_missing):
         print("\nNothing missing!")
 
@@ -139,6 +238,7 @@ def ensure_scale(v, f):
 
 
 def test(cfg):
+    """Prints what the bot sees right now and saves the screenshot (raw + annotated) to logs/."""
     v, f = _capture(cfg)
     f, scale = ensure_scale(v, f)
     print(f"Window: {f.rect[2]}x{f.rect[3]} at ({f.rect[0]},{f.rect[1]})")
@@ -154,24 +254,26 @@ def test(cfg):
         if val >= thr:
             cv2.rectangle(annotated, loc, (loc[0] + w, loc[1] + h), (0, 0, 255), 2)
             cv2.putText(annotated, name, (loc[0], max(12, loc[1] - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-    for val, name, thr in sorted(rows, reverse=True):
+    for val, name, thr in sorted(rows, reverse=True)[:15]:
         print(f"{'SEEN' if val >= thr else '    '} {val:.3f}  {name}")
 
     c = cfg["card"]
     m = v.find_card(f, c["templates"], c["scales"], 0.0)
     if m:
-        print(f"\nLight Hello card: best similarity {m.score:.3f} (threshold {c['threshold']})"
+        print(f"\nSupport card ({c.get('name') or '?'}): best similarity {m.score:.3f} (threshold {c['threshold']})"
               f"{'  <- FOUND' if m.score >= c['threshold'] else ''}")
 
     bot = Bot(cfg, vision=v, mouse=_NullMouse(), sleep=lambda s: None)
     r, target = bot.evaluate(f)
     print(f"\nRule the bot would run now: {r.name + ' -> ' + str(target) if r else '(none, it would wait)'}")
-    path = os.path.join(cfg["_base"], "logs", f"test_{datetime.now():%Y%m%d_%H%M%S}.png")
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    cv2.imencode(".png", annotated)[1].tofile(path)
-    print(f"Annotated screenshot: {path}")
+    stamp = f"{datetime.now():%Y%m%d_%H%M%S}"
+    folder = os.path.join(cfg["_base"], "logs")
+    _write_png(f.raw, os.path.join(folder, f"test_{stamp}_raw.png"))
+    _write_png(annotated, os.path.join(folder, f"test_{stamp}.png"))
+    print(f"Screenshots saved to {folder} (test_{stamp}*.png)")
 
 
+# ---------------------------------------------------------------- advanced
 def save_crop(raw, box, scale, dest):
     """Saves raw[box] converted to the reference scale, so it works at any window size."""
     x, y, w, h = box
@@ -179,8 +281,7 @@ def save_crop(raw, box, scale, dest):
     if abs(scale - 1) > 0.005:
         size = (max(1, round(w / scale)), max(1, round(h / scale)))
         piece = cv2.resize(piece, size, interpolation=cv2.INTER_AREA if scale > 1 else cv2.INTER_CUBIC)
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    cv2.imencode(".png", piece)[1].tofile(dest)
+    _write_png(piece, dest)
     return piece.shape[1], piece.shape[0]
 
 

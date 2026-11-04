@@ -1,67 +1,38 @@
 # Templates
 
-Each template is a PNG crop of a button (or of something that identifies a screen).
-The file name must be **exactly** the one in the tables below, because that's the name the rules in `config.toml` use.
+Each template is a small PNG of a button, or of something that only appears on one screen. The rules in
+[`config.toml`](../config.toml) refer to them by file name.
 
-- `templates/_downloaded/` is created by `python -m umabot download` and is not committed to git.
-- `templates/*.png` are your own crops. If one has the same name as a downloaded one, yours wins.
+- All templates are stored at the scale of a **1920x1080 fullscreen** game. The bot rescales the screen for any
+  other window size, so one set works everywhere.
+- `templates/_downloaded/` holds fallback generic buttons. The app downloads them by itself and they are not committed.
+- `templates/_card/` holds the support card chosen in the app (not committed).
 
-You can crop with the game at **any size, windowed or fullscreen**. Every template is stored at the scale of a
-1920x1080 fullscreen game, and `crop` converts your crop on its own using the UI scale it measured for your window.
-Tip: run `test` once on a screen that has a Next/OK/Close button before your first crop. That way the scale of your
-window size is measured, not guessed.
+## Screenshots needed
 
-## Already provided by `download`
+Templates are cropped from real screenshots of the game. Put them in [`screenshots/`](../screenshots/), numbered in
+the order they happen. Use **PrtScn** in fullscreen, or **Alt+PrtScn** in windowed mode to capture just the game window.
 
-| Name | What it is |
-|---|---|
-| `next`, `next2` | "Next" button |
-| `ok` | "OK" button |
-| `close` | "Close" button |
-| `cancel` | "Cancel" button (used on the TP popup) |
-| `skip`, `skip_big` | ⏭ skip button |
-| `complete_career` | pink "Complete Career" button |
-| `confirm`, `back`, `ok2`, `career_lobby` | extras, not used by any rule yet |
-| `card_light_hello`, `card_light_hello_full` | icon of the SSR Light Hello [From the Ground Up] card, from GameTora |
-
-> The buttons come from the [umamusume-auto-train](https://github.com/samsulpanjul/umamusume-auto-train) project
-> (Steam version, 1920x1080) and the card from [GameTora](https://gametora.com/umamusume/supports/30052-light-hello).
-> They are downloaded to your PC and are not stored in this repository.
-
-## Still to crop (needs the game)
-
-| Name | Where it shows up | What for |
+| # | Screen | Templates cropped from it |
 |---|---|---|
-| `home_career` | home screen, **Career** button | start a run (only inside the schedule) |
-| `empty_friend_slot` | deck screen, the empty friend card slot | open the friend list |
-| `friend_list` | friend card list: something only that screen has (e.g. its title) | know when to look for Light Hello |
-| `refresh` | friend list, refresh button (optional) | if Light Hello isn't listed |
-| `start_career` | deck screen, **Start Career!** button | |
-| `confirm_start` | popup confirming the start (the one showing the 30 TP) | counts runs |
-| `independent_training` | button that turns on Independent Training | |
-| `confirm_independent_training` | Independent Training confirmation (if there is one) | |
-| `tp_popup` | not-enough-TP popup: something only it has (e.g. its title) | cancel and wait |
-| `stop_carats` | any popup that would **spend carats** | **stops the bot**: very important |
-| `stop_veterans_full` | veterans list full warning | stops the bot |
-| `title_screen` | title screen ("Tap to start") | clicks the middle |
-| `connection_error` + `retry` | connection error popup and its **Retry** button | |
+| 1 | Home screen | `home_career` |
+| 2 | Every screen between pressing Career and the deck (scenario, trainee, legacy…) | `next` and anything else clicked |
+| 3 | Deck screen with the **friend slot empty** | `empty_friend_slot` |
+| 4 | Friend support card list | `friend_list`, `refresh` |
+| 5 | Deck screen with the friend card chosen | `start_career` |
+| 6 | Popup confirming the start (shows the TP cost) | `confirm_start` |
+| 7 | Popup when there isn't enough TP (don't confirm anything) | `tp_popup`, `cancel` |
+| 8 | Where Independent Training is turned on, plus its confirmation | `independent_training`, `confirm_independent_training` |
+| 9 | Every screen from the end of the career back to Home, one per click | `complete_career`, `ok`, `close`, … |
+| 10 | Any popup that would spend carats (don't confirm it) | `stop_carats` |
+| 11 | When seen: veterans list full, connection error, title screen | `stop_veterans_full`, `connection_error` + `retry`, `title_screen` |
 
-### How to crop
+## Cropping by hand
 
 ```
-python -m umabot crop home_career
+python -m umabot crop home_career                                   # from the running game
+python -m umabot crop home_career --from screenshots/01_home.png    # from a screenshot
 ```
-It takes a screenshot of the game 3 seconds later. Drag a rectangle around the button and press ENTER.
 
-Crop just the button, with a small margin. Avoid numbers that change (TP, fans, dates) and the character.
-
-### Alternative: send full screenshots
-
-If that's easier, take a screenshot of each screen in the table: **Alt+PrtScn** in windowed mode (only the game
-window), or **PrtScn** in fullscreen. Put them in `screenshots/` named after the template
-(e.g. `screenshots/home_career.png`) and push.
-The crops can then be made from those, or you can do it yourself with:
-
-```
-python -m umabot crop home_career --from screenshots/home_career.png
-```
+Drag a rectangle around the button and press ENTER. Crop just the button with a small margin, avoiding numbers that
+change (TP, fans, dates) and characters. The crop is converted to the reference scale automatically.

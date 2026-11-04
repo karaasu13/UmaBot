@@ -2,24 +2,28 @@
 import json
 import logging
 import os
+import sys
 import urllib.request
 from logging.handlers import RotatingFileHandler
 
 log = logging.getLogger("umabot")
+FORMAT = logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S")
 
 
 def setup(base):
     folder = os.path.join(base, "logs")
     os.makedirs(folder, exist_ok=True)
-    if log.handlers:
+    if getattr(log, "_umabot_ready", False):
         return folder
     log.setLevel(logging.INFO)
-    fmt = logging.Formatter("%(asctime)s %(message)s", "%Y-%m-%d %H:%M:%S")
-    for h in (logging.StreamHandler(),
-              RotatingFileHandler(os.path.join(folder, "umabot.log"), maxBytes=1_000_000,
-                                  backupCount=3, encoding="utf-8")):
-        h.setFormatter(fmt)
+    handlers = [RotatingFileHandler(os.path.join(folder, "umabot.log"), maxBytes=1_000_000,
+                                    backupCount=3, encoding="utf-8")]
+    if sys.stderr is not None:  # the windowed .exe has no console
+        handlers.append(logging.StreamHandler())
+    for h in handlers:
+        h.setFormatter(FORMAT)
         log.addHandler(h)
+    log._umabot_ready = True
     return folder
 
 

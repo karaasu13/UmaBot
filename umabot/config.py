@@ -1,8 +1,11 @@
-"""Loads config.toml on top of the defaults."""
+"""Configuration: defaults <- config.toml (advanced settings) <- settings.json (choices made in the menu)."""
 import copy
+import json
 import os
 import sys
 import tomllib
+
+SETTINGS_FILE = "settings.json"
 
 DEFAULTS = {
     "game": {
@@ -30,7 +33,9 @@ DEFAULTS = {
     },
     "tp": {"wait_min": [25, 45]},
     "card": {
-        "templates": ["card_light_hello", "card_light_hello_full"],
+        "id": 0,            # GameTora ID of the support card to borrow (0 = not chosen yet)
+        "name": "",
+        "templates": ["card", "card_full"],
         "threshold": 0.75,
         "scales": [0.4, 1.8],
         "scroll_pos": "auto",
@@ -69,6 +74,22 @@ def _merge(base, new):
     return base
 
 
+def load_settings(base):
+    try:
+        with open(os.path.join(base, SETTINGS_FILE), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(base, changes):
+    data = _merge(load_settings(base), changes)
+    with open(os.path.join(base, SETTINGS_FILE), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return data
+
+
 def load(path=None, base=None):
     base = base or base_dir()
     path = path or os.path.join(base, "config.toml")
@@ -77,5 +98,6 @@ def load(path=None, base=None):
         with open(path, "rb") as f:
             data = tomllib.load(f)
     cfg = _merge(copy.deepcopy(DEFAULTS), data)
+    _merge(cfg, load_settings(base))
     cfg["_base"] = base
     return cfg

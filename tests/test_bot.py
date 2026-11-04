@@ -58,7 +58,7 @@ def world(tmp_path):
     card_rect = (700, 400, 120, 150)
     x, y, w, h = card_rect
     icon = cv2.resize(screen[y:y + h, x:x + w], None, fx=1 / 0.6, fy=1 / 0.6, interpolation=cv2.INTER_CUBIC)
-    cv2.imwrite(str(t / "card_light_hello.png"), icon)
+    cv2.imwrite(str(t / "card.png"), icon)
 
     cfg = config.load(base=str(tmp_path))
     cfg["rule"] = [
@@ -145,17 +145,17 @@ def test_stuck_stops(world):
 
 def test_card_at_a_different_scale(world):
     cfg, vision, _, _, card_rect = world
-    cfg["card"]["templates"] = ["card_light_hello"]
+    cfg["card"]["templates"] = ["card"]
     bot, mouse = make_bot(cfg, vision)
     bot.pick_card()
     assert mouse.clicks and inside(mouse.clicks[-1], card_rect)
     assert mouse.scrolls == []
-    assert abs(vision._card_scale["card_light_hello"] - 0.6) < 0.08
+    assert abs(vision._card_scale["card"] - 0.6) < 0.08
 
 
 def test_missing_card_scrolls_and_counts_failure(world):
     cfg, vision, state, *_ = world
-    cfg["card"]["templates"] = ["card_light_hello"]
+    cfg["card"]["templates"] = ["card"]
     state["img"] = synthetic_screen(5)
     bot, mouse = make_bot(cfg, vision)
     assert bot.pick_card() is not None
@@ -232,7 +232,7 @@ def test_scroll_auto_follows_the_list_title(world):
     screen[y:y + h, x:x + w] = synthetic_screen(7)[y:y + h, x:x + w]  # card not on screen
     state["img"] = screen
     cfg["rule"] = [{"name": "card", "if_seen": ["friend_list"], "action": "card"}]
-    cfg["card"]["templates"] = ["card_light_hello"]
+    cfg["card"]["templates"] = ["card"]
     bot, mouse = make_bot(cfg, vision)
     bot.step()
     fx, _, fw, _ = rects["friend_list"]
@@ -306,6 +306,70 @@ def test_schedule_changes_every_day():
     s = Schedule(dict(config.DEFAULTS["schedule"]), seed=7)
     starts = {s.plan(date(2026, 11, d))["start"].time() for d in range(1, 15)}
     assert len(starts) > 10
+
+
+# ---------------------------------------------------------------- support card choice & settings
+def test_parse_card_accepts_links_ids_and_pngs(tmp_path):
+    from umabot.tools import parse_card
+    assert parse_card("https://gametora.com/umamusume/supports/30052-light-hello") == (30052, "Light Hello", None)
+    assert parse_card("gametora.com/ja/umamusume/supports/10083-light-hello?x=1")[0] == 10083
+    assert parse_card(" 20029 ") == (20029, "", None)
+    png = tmp_path / "my_card.png"
+    cv2.imwrite(str(png), synthetic_screen()[:90, :70])
+    assert parse_card(f'"{png}"') == (None, "my card", str(png))
+    for bad in ("hello", "123", "https://gametora.com/umamusume/characters/100101", str(tmp_path / "nope.png")):
+        with pytest.raises(ValueError):
+            parse_card(bad)
+
+
+def test_choosing_a_card_from_a_png_is_saved_and_used(world, tmp_path):
+    from umabot.tools import has_card, set_card
+    cfg, *_ = world
+    png = tmp_path / "pick_me.png"
+    cv2.imwrite(str(png), synthetic_screen(3)[:96, :72])
+    assert set_card(cfg, str(png)) == "pick me"
+    again = config.load(base=cfg["_base"])  # remembered in settings.json
+    assert again["card"]["name"] == "pick me" and has_card(again)
+    tpls = Vision(again, source=lambda: None).templates
+    assert tpls["card"].shape[:2] == (96, 72)
+
+
+def test_settings_override_config_and_keep_other_keys(tmp_path):
+    config.save_settings(str(tmp_path), {"schedule": {"start": "09:00"}})
+    config.save_settings(str(tmp_path), {"card": {"id": 30052, "name": "Light Hello (SSR)"}})
+    cfg = config.load(base=str(tmp_path))
+    assert cfg["schedule"]["start"] == "09:00" and cfg["schedule"]["end"] == "01:00"
+    assert cfg["card"]["id"] == 30052 and cfg["card"]["templates"] == ["card", "card_full"]
+
+
+def test_stop_button_stops_before_the_next_click(world):
+    cfg, vision, *_ = world
+    stop = {"now": False}
+    mouse = FakeMouse()
+    mouse.react = lambda: stop.update(now=True)  # Stop pressed while the bot is "reacting"
+    bot = Bot(cfg, vision=vision, mouse=mouse, now=lambda: datetime(2026, 11, 4, 15, 0), sleep=lambda s: None,
+              rng=random.Random(1), should_stop=lambda: stop["now"])
+    bot.run()
+    assert mouse.clicks == [] and bot.status == "Stopped"
+
+
+def test_status_follows_the_schedule(world):
+    cfg, vision, *_ = world
+    cfg["schedule"].update(enabled=True, start="10:00", end="12:00", jitter_min=0,
+                           finish_run_after_hours=False, breaks_per_day=[0, 0])
+    bot, _ = make_bot(cfg, vision, now=lambda: datetime(2026, 11, 4, 20, 0))
+    bot.step()
+    assert bot.status.startswith("Off hours until") and bot.status_kind == "wait"
+
+
+def test_empty_or_corrupt_templates_are_ignored(tmp_path):
+    from umabot.vision import load_templates
+    t = tmp_path / "templates"
+    t.mkdir()
+    (t / "empty.png").write_bytes(b"")
+    (t / "junk.png").write_bytes(b"not a png")
+    cv2.imwrite(str(t / "good.png"), synthetic_screen()[:40, :80])
+    assert list(load_templates(str(tmp_path))) == ["good"]
 
 
 def test_repo_config_is_valid():
