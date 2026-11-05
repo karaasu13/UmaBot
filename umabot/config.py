@@ -25,11 +25,11 @@ DEFAULTS = {
         "finish_run_after_hours": True,
     },
     "human": {
-        "reaction_s": [0.35, 1.6],
+        "reaction_s": [0.2, 0.8],
         "hold_ms": [55, 140],
-        "distraction_chance": 0.04,
-        "distraction_s": [6, 75],
-        "poll_s": [0.8, 1.8],
+        "distraction_chance": 0.02,
+        "distraction_s": [4, 30],
+        "poll_s": [0.4, 0.9],
     },
     "training": {
         "trainees": ["oguri_cap", "el_condor_pasa"],  # preferred trainees, in order
@@ -45,8 +45,8 @@ DEFAULTS = {
         "threshold": 0.75,
         "scales": [0.4, 1.8],
         "scroll_pos": "auto",
-        "scroll_amount": -5,
-        "scroll_attempts": 6,
+        "scroll_amount": -8,
+        "scroll_attempts": 20,
         "refresh": "refresh",
         "max_failures": 8,
     },
@@ -54,6 +54,7 @@ DEFAULTS = {
         "max_repeats": 25,
         "unknown_screen_min": 40,
         "discord_webhook": "",
+        "stop_on_user_input": True,
     },
     "rule": [],
 }

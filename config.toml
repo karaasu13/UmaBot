@@ -24,11 +24,11 @@ break_length_min = [15, 70]
 finish_run_after_hours = true   # after hours: finish the current run, but don't start a new one
 
 [human]
-reaction_s = [0.35, 1.6]        # delay between a button appearing and the click
+reaction_s = [0.2, 0.8]          # delay between a button appearing and the click
 hold_ms = [55, 140]             # how long the mouse button stays pressed
-distraction_chance = 0.04       # chance, per click, of a short pause
-distraction_s = [6, 75]
-poll_s = [0.8, 1.8]             # time between screenshots
+distraction_chance = 0.02       # chance, per click, of a short pause
+distraction_s = [4, 30]
+poll_s = [0.4, 0.9]             # time between screenshots
 
 [tp]
 wait_min = [25, 45]             # out of TP: wait this long before trying again (no TP is ever wasted)
@@ -41,8 +41,8 @@ templates = ["card", "card_full"]
 threshold = 0.75
 scales = [0.4, 1.8]             # the web image is searched at several sizes
 scroll_pos = "auto"             # where to scroll the list: "auto" (below its title) or [x, y] fractions (see "position")
-scroll_amount = -5
-scroll_attempts = 6
+scroll_amount = -8
+scroll_attempts = 20            # scrolls through the list before giving up (stops early at the bottom)
 refresh = "refresh"             # friend list refresh button (optional)
 max_failures = 8                # stop if the card isn't found X times in a row
 
@@ -50,6 +50,7 @@ max_failures = 8                # stop if the card isn't found X times in a row
 max_repeats = 25                # same click X times in a row without the screen changing = stuck, stop
 unknown_screen_min = 40         # X min without recognising the screen: save a screenshot to logs/
 discord_webhook = ""            # optional: webhook URL to get notified when the bot stops
+stop_on_user_input = true       # stop as soon as you use the mouse or keyboard
 
 # ============================================================================
 #  RULES: checked top to bottom; the first one that matches is executed.

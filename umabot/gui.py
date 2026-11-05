@@ -26,6 +26,7 @@ from .engine import Bot, agenda_slug, counted, prepare_rules, rule_options
 from .logger import log, setup as setup_logging
 from .schedule import Schedule
 from .vision import load_templates
+from .watch import InputWatch
 
 # ---------------------------------------------------------------- design tokens (light, dark)
 INK = ("#16213B", "#E6ECF5")        # text: navy from the icon / its light counterpart
@@ -49,6 +50,43 @@ RED = ("#C2413B", "#EF6B63")        # errors
 KIND = {"ok": TURF, "wait": GOLD, "stop": INK_SOFT, "error": RED}
 
 GAMETORA_SUPPORTS = "https://gametora.com/umamusume/supports"
+
+HELP = """
+# Before you start
+- Umamusume (Steam) open, windowed or fullscreen, any size. Not minimised, with nothing on top of it.
+- The PC must not lock or go to sleep (Windows Settings > Power). The monitor may turn off.
+- Start from the game's home screen. UmaBot also picks up from any screen of a run.
+
+# In the game, once
+- Save a farming agenda in My Agendas (Career > Final Confirmation > Independent Training > Edit > My Agendas).
+  Without a good agenda the runs farm far fewer fans.
+- Select the deck you want (your 5 cards). The friend slot is filled by UmaBot.
+- Follow at least one friend who lends the support card you want.
+- Leave some room in the veterans list.
+
+# In UmaBot
+- Support card: paste its GameTora link or ID (Light Hello SSR is 30052) and press Use card.
+- Trains: your trainee, and another one in case the first isn't available.
+- Focus: Balanced, Stamina or Sprint (Sprint by default).
+- Agenda: the exact name of your saved agenda. If UmaBot doesn't know it yet, open My Agendas in the game
+  and press "Show it to UmaBot", then drag a box around the agenda (name and races, not the buttons).
+- Free veteran spaces: count them in the game. UmaBot counts down every run, warns at 5 and stops at 0.
+- Plays from / to: the hours it may start runs. They shift a little every day and there are a few breaks.
+
+# Starting and stopping
+- Press "Check the game screen" first: Activity shows what UmaBot sees and what it would press.
+- Press Start (or F8 while UmaBot is focused). With "Hide UmaBot while it plays" the window minimises.
+- Hands off: if "Stop when I use the mouse or keyboard" is on, touching either one stops it.
+- You can also press Stop, or fling the mouse into the top-left corner of the screen.
+
+# What UmaBot never does
+- Spend carats, use TP items, reroll sparks or start a normal (non-independent) career.
+- When TP runs out it closes the Recover TP window and waits until there's enough again.
+
+# If something goes wrong
+- Activity tells you what happened. "Open logs" has screenshots of anything unusual.
+- Stuck on an unknown screen? Bring the game back to the home screen and press Start again.
+"""
 TIME_RE = re.compile(r"([01]?\d|2[0-3]):[0-5]\d")
 
 
@@ -115,6 +153,7 @@ class App(ctk.CTk):
         self.bind("<F8>", lambda e: self._toggle())
 
         self._apply_mode()
+        self._upgrade_card()
         self._refresh_agenda()
         self._refresh_veterans()
         self._refresh_card()
@@ -219,9 +258,10 @@ class App(ctk.CTk):
         except Exception:
             pass
         self._label(head, "UmaBot", self.f_display, 24).grid(row=0, column=1, sticky="w")
+        self._link(head, "How to use", self._show_help, size=12).grid(row=0, column=2, sticky="e", padx=(0, 16))
         self.mode_link = self._link(head, "", self._switch_mode, size=12)
-        self.mode_link.grid(row=0, column=2, sticky="e", padx=(0, 16))
-        self._label(head, f"v{__version__}", self.f_body, 12, INK_SOFT).grid(row=0, column=3, sticky="e")
+        self.mode_link.grid(row=0, column=3, sticky="e", padx=(0, 16))
+        self._label(head, f"v{__version__}", self.f_body, 12, INK_SOFT).grid(row=0, column=4, sticky="e")
 
         # status + the one button
         top = ctk.CTkFrame(self, fg_color="transparent")
@@ -249,6 +289,13 @@ class App(ctk.CTk):
                         checkmark_color=ON_SOLID,
                         border_color=LINE, border_width=2, checkbox_width=18, checkbox_height=18,
                         corner_radius=4).grid(row=1, column=0, sticky="e", pady=(10, 0))
+        self.watch_input = ctk.BooleanVar(value=bool(self.cfg["safety"].get("stop_on_user_input", True)))
+        ctk.CTkCheckBox(act, text="Stop when I use the mouse or keyboard", variable=self.watch_input,
+                        command=lambda: config.save_settings(self.base, {"safety": {
+                            "stop_on_user_input": bool(self.watch_input.get())}}),
+                        font=self.font(self.f_body, 13), text_color=INK_SOFT, fg_color=SOLID, hover_color=SOLID,
+                        checkmark_color=ON_SOLID, border_color=LINE, border_width=2, checkbox_width=18,
+                        checkbox_height=18, corner_radius=4).grid(row=2, column=0, sticky="e", pady=(6, 0))
 
         # today's track
         self.track = ctk.CTkCanvas(self, height=96, bg=self.col(CHALK), highlightthickness=0, bd=0)
@@ -695,6 +742,43 @@ class App(ctk.CTk):
         else:
             self.card_form.grid_remove()
 
+    def _upgrade_card(self):
+        cid = self.cfg["card"].get("id")
+        folder = os.path.join(self.base, "templates", "_card")
+        if cid and os.path.exists(os.path.join(self.base, "templates", "cards", f"{cid}.png")) \
+                and os.path.exists(os.path.join(folder, "card_full.png")):
+            try:
+                tools.set_card(self.cfg, str(cid))
+                log.info("support card picture updated to the one cropped from the game")
+            except Exception:
+                pass
+
+    def _show_help(self):
+        if getattr(self, "_help", None) and self._help.winfo_exists():
+            self._help.focus()
+            return
+        win = self._help = ctk.CTkToplevel(self, fg_color=CHALK)
+        win.title("How to use UmaBot")
+        win.geometry("620x640")
+        win.transient(self)
+        self._label(win, "How to use UmaBot", self.f_display, 26).pack(anchor="w", padx=28, pady=(22, 6))
+        box = ctk.CTkTextbox(win, fg_color=PAPER, text_color=INK, border_width=0, corner_radius=10,
+                             font=self.font(self.f_body, 14), wrap="word")
+        box.pack(fill="both", expand=True, padx=28, pady=(6, 24))
+        box.tag_config("h", foreground=self.col(CORAL))
+        lines = []
+        for line in HELP.strip().splitlines():  # indented lines continue the previous one
+            if line.startswith("  ") and lines:
+                lines[-1] += " " + line.strip()
+            else:
+                lines.append(line)
+        for line in lines:
+            if line.startswith("# "):
+                box.insert("end", line[2:] + "\n", "h")
+            else:
+                box.insert("end", line + "\n")
+        box.configure(state="disabled")
+
     def _edit_card(self):
         self.editing_card = not self.editing_card
         self._refresh_card()
@@ -784,7 +868,19 @@ class App(ctk.CTk):
             bot = None
             try:
                 bot = self.bot = Bot(cfg, sleep=self.stop_event.wait, should_stop=self.stop_event.is_set)
-                bot.run()
+                watch = None
+                if self.watch_input.get():
+                    def took_over():
+                        log.info("Stopped: you used the mouse or the keyboard")
+                        bot.set_status("Stopped: you took over", "stop")
+                        self.stop_event.set()
+                    watch = InputWatch(bot.mouse, took_over).start()
+                    log.info("Hands off in 3 seconds: touching the mouse or keyboard stops UmaBot.")
+                try:
+                    bot.run()
+                finally:
+                    if watch:
+                        watch.stop()
             except Exception as e:
                 if type(e).__name__ == "FailSafeException":
                     log.info("Stopped: the mouse went into the corner of the screen")
@@ -842,7 +938,7 @@ class App(ctk.CTk):
         if self.thread and not self.thread.is_alive():
             self.thread = None
             self._set_running(False)
-            if self.bot and self.bot.status_kind in ("ok", "wait"):
+            if self.bot and self.bot.status_kind in ("ok", "wait") and not self.bot.status.startswith("Stopped"):
                 self.bot.set_status("Stopped", "stop")
             if self.state() == "iconic":
                 self.deiconify()  # show the app again when the bot stops

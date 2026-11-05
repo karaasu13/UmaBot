@@ -372,8 +372,8 @@ class Bot:
                     return self._click_match(lm, f"loading the agenda '{self.cfg['training']['agenda']}'")
                 break
             if i < 5:
-                self.mouse.scroll(*self.scroll_point(frame, marker), -4)
-                self.sleep(self.rng.uniform(0.8, 1.4))
+                self.mouse.scroll(*self.scroll_point(frame, marker), -6)
+                self.sleep(self.rng.uniform(0.45, 0.75))
         msg = (f"Couldn't find the agenda '{self.cfg['training'].get('agenda')}' in My Agendas, "
                "so this run keeps the agenda that was set.")
         self.notices.append(msg)
@@ -423,8 +423,13 @@ class Bot:
                 self.card_pause_until = self.now() + timedelta(seconds=20)
                 return between(self.rng, (1.5, 2.5))
             if i < c["scroll_attempts"]:
+                before = frame.small()
                 self.mouse.scroll(*self.scroll_point(frame, marker), c["scroll_amount"])
-                self.sleep(self.rng.uniform(0.8, 1.4))
+                self.sleep(self.rng.uniform(0.45, 0.75))
+                after = self.vision.capture()
+                if after is not None and after.small().shape == before.shape and \
+                        float(cv2.absdiff(after.small(), before).mean()) < 0.8:
+                    break  # the list didn't move: we're at the bottom
 
         self.card_failures += 1
         log.info(f"{self.card_name} not found ({self.card_failures}/{c['max_failures']})")

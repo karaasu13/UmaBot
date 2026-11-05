@@ -159,7 +159,7 @@ def test_missing_card_scrolls_and_counts_failure(world):
     state["img"] = synthetic_screen(5)
     bot, mouse = make_bot(cfg, vision)
     assert bot.pick_card() is not None
-    assert len(mouse.scrolls) >= cfg["card"]["scroll_attempts"] and bot.card_failures == 1
+    assert mouse.scrolls and bot.card_failures == 1  # the list didn't move: stops scrolling early
 
 
 # ---------------------------------------------------------------- vision
@@ -424,3 +424,37 @@ def test_veterans_not_tracked_by_default(world):
     bot.step()
     bot.step()
     assert bot.veterans_free() is None and inside(mouse.clicks[-1], rects["home_career"])
+
+
+# ---------------------------------------------------------------- stop when the person takes over
+def test_input_watch_stops_when_the_person_moves_the_mouse():
+    import time as _t
+    from umabot.watch import InputWatch
+
+    class M:
+        busy, done_at = False, 0.0
+    pos, hits = {"p": (10, 10)}, []
+    w = InputWatch(M(), lambda: hits.append(1), position=lambda: pos["p"], grace=0.05, interval=0.02).start()
+    _t.sleep(0.2)
+    assert not hits
+    pos["p"] = (60, 80)
+    _t.sleep(0.2)
+    w.stop()
+    assert hits == [1]
+
+
+def test_input_watch_ignores_umabots_own_movement():
+    import time as _t
+    from umabot.watch import InputWatch
+
+    class M:
+        busy, done_at = True, 0.0
+    pos, hits = {"p": (10, 10)}, []
+    w = InputWatch(M(), lambda: hits.append(1), position=lambda: pos["p"], grace=0.05, interval=0.02).start()
+    _t.sleep(0.1)
+    pos["p"] = (300, 200)  # the bot moving the mouse
+    _t.sleep(0.1)
+    M.busy, M.done_at = False, _t.monotonic()
+    _t.sleep(0.6)  # bot finished; nobody touches anything
+    w.stop()
+    assert hits == []

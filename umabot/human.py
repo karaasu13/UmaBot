@@ -70,32 +70,42 @@ class Mouse:
             pyautogui.PAUSE = 0
             backend = pyautogui
         self.pg = backend
+        self.busy = False          # True while UmaBot itself moves the mouse
+        self.done_at = time.monotonic()
 
     def move(self, x, y):
         x0, y0 = self.pg.position()
         pts = mouse_path(x0, y0, x, y, self.rng)
         dist = math.hypot(x - x0, y - y0)
-        duration = self.rng.uniform(0.12, 0.22) + 0.00035 * dist + abs(self.rng.gauss(0, 0.04))
+        duration = self.rng.uniform(0.07, 0.13) + 0.0002 * dist + abs(self.rng.gauss(0, 0.025))
         step = duration / len(pts)
         for px, py in pts:
             self.pg.moveTo(px, py)
             self.sleep(step)
 
     def click(self, cx, cy, w, h):
-        x, y = click_point(cx, cy, w, h, self.rng)
-        self.move(x, y)
-        self.sleep(self.rng.uniform(0.03, 0.12))
-        self.pg.mouseDown()
-        self.sleep(between(self.rng, self.cfg["hold_ms"]) / 1000)
-        self.pg.mouseUp()
-        return x, y
+        self.busy = True
+        try:
+            x, y = click_point(cx, cy, w, h, self.rng)
+            self.move(x, y)
+            self.sleep(self.rng.uniform(0.02, 0.07))
+            self.pg.mouseDown()
+            self.sleep(between(self.rng, self.cfg["hold_ms"]) / 1000)
+            self.pg.mouseUp()
+            return x, y
+        finally:
+            self.busy, self.done_at = False, time.monotonic()
 
     def scroll(self, x, y, amount):
-        self.move(x + self.rng.randint(-15, 15), y + self.rng.randint(-15, 15))
-        direction = -1 if amount < 0 else 1
-        for _ in range(abs(amount)):  # several wheel notches, with an irregular rhythm
-            self.pg.scroll(direction * self.rng.randint(1, 2))
-            self.sleep(self.rng.uniform(0.03, 0.11))
+        self.busy = True
+        try:
+            self.move(x + self.rng.randint(-15, 15), y + self.rng.randint(-15, 15))
+            direction = -1 if amount < 0 else 1
+            for _ in range(abs(amount)):  # several wheel notches, with an irregular rhythm
+                self.pg.scroll(direction * self.rng.randint(1, 2))
+                self.sleep(self.rng.uniform(0.02, 0.06))
+        finally:
+            self.busy, self.done_at = False, time.monotonic()
 
     def react(self):
         """Wait before clicking, like someone who has just noticed the button."""
