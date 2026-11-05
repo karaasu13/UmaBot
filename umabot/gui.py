@@ -849,9 +849,20 @@ class App(ctk.CTk):
         self._draw_track()
 
     # ------------------------------------------------------------ run
+    def _commit_fields(self):
+        """Save whatever is typed in the fields: pressing Start doesn't take the focus away from them."""
+        self._agenda_changed()
+        text = self.vet_entry.get().strip()
+        free = self.cfg["training"].get("veterans_free", -1)
+        if text != (str(free) if isinstance(free, int) and free >= 0 else ""):
+            self._veterans_changed()
+        self._schedule_changed()
+        self.focus()
+
     def _start(self):
         if self.thread:
             return
+        self._commit_fields()
         self.cfg = config.load(self.cfg_path)
         if not tools.has_card(self.cfg):
             self.editing_card = True

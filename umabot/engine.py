@@ -450,7 +450,10 @@ class Bot:
 
     # ------------------------------------------------------------ main loop
     def run(self):
-        log.info(f"UmaBot starting, borrowing {self.card_name}.")
+        t = self.cfg["training"]
+        trainees = " or ".join(p.replace("_", " ").title() for p in t.get("trainees", [])) or "the selected trainee"
+        agenda = f"agenda '{t['agenda']}'" if t.get("agenda") else "the agenda already set in the game"
+        log.info(f"UmaBot starting: {trainees}, {t.get('focus', 'sprint')} focus, {agenda}, borrowing {self.card_name}.")
         self.summary()
         log.info("To stop: press Stop, or fling the mouse to the top-left corner of the screen.")
         errors = 0
