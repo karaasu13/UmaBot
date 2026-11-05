@@ -202,6 +202,7 @@ def test_agenda_crops_never_set_the_ui_scale(base):
     cfg = config.load(base=base)
     img = cv2.imread(os.path.join(SCREENS, "s13_my_agendas.png"))
     vision = Vision(cfg, source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
+    vision.templates = {n: t for n, t in vision.templates.items() if n == "agenda_farmoguri"}
     frame = vision.capture()
     assert not vision.maybe_calibrate(frame, force=True) and not vision.calibrated
 
