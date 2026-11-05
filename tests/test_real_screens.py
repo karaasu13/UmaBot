@@ -179,3 +179,15 @@ def test_unknown_agenda_name_is_reported_not_guessed(base):
 def test_every_screen_is_covered():
     names = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(SCREENS, "*.png")))
     assert names == sorted({**START, **END})
+
+
+def test_agenda_not_in_the_list_stops_instead_of_running_without_it(base):
+    # an agenda the bot knows, but that isn't in this (static) list: it scrolls both ways, then stops
+    other = cv2.imread(os.path.join(SCREENS, "s12_agenda_empty.png"))
+    cv2.imwrite(os.path.join(base, "templates", "agenda_other.png"), cv2.resize(other[300:360, 100:330], None, fx=1 / SCALE, fy=1 / SCALE))
+    bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda="other")
+    rule, target = target_of(bot, vision)
+    assert rule.name == "Load the saved agenda"
+    assert bot.execute(rule, target, vision.capture()) is None
+    assert len(mouse.scrolls) == 2 and mouse.scrolls[0][2] < 0 < mouse.scrolls[1][2]  # down, then up
+    assert bot.status == "Stopped: agenda not found" and mouse.clicks == []

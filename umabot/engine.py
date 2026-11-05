@@ -354,31 +354,46 @@ class Bot:
         return self._click_match(m, "next") if m else 1
 
     def load_agenda(self, marker=None):
-        """My Agendas: find the saved agenda (scrolling if needed) and press its Load List."""
-        name = f"agenda_{agenda_slug(self.cfg['training'].get('agenda'))}"
+        """My Agendas: find the saved agenda, scrolling down the list (and back up if needed), and press its
+        Load List. Without the agenda no run starts: a run without it farms far fewer fans."""
+        agenda = self.cfg["training"].get("agenda")
+        name = f"agenda_{agenda_slug(agenda)}"
         tpl = self.vision.templates.get(name)
-        frame = None
-        for i in range(6):
+        direction, turned, scrolls = -1, False, 0
+        while tpl is not None and scrolls < 40:
+            if self.should_stop():
+                return None
             frame = self.vision.capture()
             if frame is None:
                 return 2
             m = frame.find(name)
-            if m and tpl is not None:
+            step = direction * 10
+            if m:
                 # Load List sits just right of the agenda's box (Save Here is above it: never pressed)
                 x0 = (m.x - frame.rect[0]) / frame.k + tpl.shape[1] / 2
                 y0 = (m.y - frame.rect[1]) / frame.k - tpl.shape[0] / 2
                 lm = self.vision.find_in(frame, "load_list", x0 - 10, y0 - 10, x0 + 260, y0 + tpl.shape[0] + 60)
                 if lm:
-                    return self._click_match(lm, f"loading the agenda '{self.cfg['training']['agenda']}'")
-                break
-            if i < 5:
-                self.mouse.scroll(*self.scroll_point(frame, marker), -6)
-                self.sleep(self.rng.uniform(0.45, 0.75))
-        msg = (f"Couldn't find the agenda '{self.cfg['training'].get('agenda')}' in My Agendas, "
-               "so this run keeps the agenda that was set.")
+                    return self._click_match(lm, f"loading the agenda '{agenda}'")
+                step = direction * 3  # the box is in view but its button isn't yet: nudge
+            if scrolls == 0:
+                log.info(f"looking for the agenda '{agenda}' in My Agendas")
+            before = frame.small()
+            self.mouse.scroll(*self.scroll_point(frame, marker), step)
+            self.sleep(self.rng.uniform(0.45, 0.75))
+            scrolls += 1
+            after = self.vision.capture()
+            if after is not None and after.small().shape == before.shape and \
+                    float(cv2.absdiff(after.small(), before).mean()) < 0.8:
+                if turned:
+                    break
+                direction, turned = -direction, True  # end of the list: look the other way
+        msg = (f"Couldn't find the agenda '{agenda}' in My Agendas, so no run was started. Check the name, "
+               "or open My Agendas and press 'Show it to UmaBot' again.")
+        self.set_status("Stopped: agenda not found", "error")
         self.notices.append(msg)
         notify(self.webhook(), msg)
-        return 1
+        return None
 
     def _looks_out_of_tp(self):
         """Without a picture of the "not enough TP" popup: if Start Career keeps being pressed and no run
