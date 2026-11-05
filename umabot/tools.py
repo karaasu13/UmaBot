@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from .config import cli_name, save_settings
-from .engine import Bot, prepare_rules
+from .engine import Bot, agenda_slug, prepare_rules, rule_options
 from .schedule import Schedule
 from .vision import Vision, load_templates
 
@@ -41,6 +41,7 @@ CARD_IMAGE_URLS = (
     "https://media.gametora.com/umamusume/supports/full/small/{id}.png",
 )
 EXAMPLE_CARD = "https://gametora.com/umamusume/supports/30052-light-hello"
+KNOWN_CARDS = {30052: "Light Hello (SSR)"}  # cards cropped from the game, in templates/cards
 
 
 def _get(url, limit=None):
@@ -91,11 +92,14 @@ def set_card(cfg, text):
     """Chooses the support card to borrow: gets its icon (or uses a .png) and saves the choice."""
     base = cfg["_base"]
     card_id, hint, path = parse_card(text)
-    if path:
-        img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
+    bundled = os.path.join(base, "templates", "cards", f"{card_id}.png") if card_id else ""
+    if path or os.path.exists(bundled):
+        # a picture of the card (yours, or one cropped from the game that ships with UmaBot)
+        img = cv2.imdecode(np.fromfile(path or bundled, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
-            raise ValueError(f"couldn't read {path}")
-        name = hint
+            raise ValueError(f"couldn't read {path or bundled}")
+        name = hint if path else (KNOWN_CARDS.get(card_id) or card_title(card_id) or hint or f"card {card_id}")
+        path = path or bundled
     else:
         img, error = None, None
         for url in CARD_IMAGE_URLS:
@@ -191,7 +195,8 @@ def check(cfg):
     base = cfg["_base"]
     tpls = load_templates(base)
     print(f"Templates: {len(tpls)}  |  support card: {cfg['card'].get('name') or '(not chosen)'}\n")
-    rules = prepare_rules(cfg["rule"], lambda n: n in tpls, cfg["card"]["templates"])
+    rules = [r for r in prepare_rules(cfg["rule"], lambda n: n in tpls, cfg["card"]["templates"], *rule_options(cfg))
+             if not r.unused]
     missing = []
     for r in rules:
         extra = f"  -> missing: {', '.join(r.missing)}" if r.missing else ""
@@ -311,6 +316,23 @@ def crop(cfg, name, file=None):
     dest = os.path.join(cfg["_base"], "templates", name + ".png")
     sw, sh = save_crop(raw, box, f.k, dest)
     print(f"Saved {dest} ({sw}x{sh} at reference scale)")
+
+
+def teach_agenda(cfg, name):
+    """With My Agendas open in the game: drag a box around the agenda (its name and races, not the buttons)."""
+    v, f = _capture(cfg)
+    f, _ = ensure_scale(v, f)
+    raw = f.raw
+    k = min(1.0, 1500 / raw.shape[1], 850 / raw.shape[0])
+    small = cv2.resize(raw, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else raw
+    x, y, w, h = cv2.selectROI(f"Drag a box around '{name}' (name and races, not the buttons), then ENTER",
+                               small, showCrosshair=True)
+    cv2.destroyAllWindows()
+    if w == 0 or h == 0:
+        return False
+    box = tuple(round(val / k) for val in (x, y, w, h))
+    save_crop(raw, box, f.k, os.path.join(cfg["_base"], "templates", f"agenda_{agenda_slug(name)}.png"))
+    return True
 
 
 def position(cfg):

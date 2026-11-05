@@ -31,6 +31,11 @@ DEFAULTS = {
         "distraction_s": [6, 75],
         "poll_s": [0.8, 1.8],
     },
+    "training": {
+        "trainees": ["oguri_cap", "el_condor_pasa"],  # preferred trainees, in order
+        "focus": "sprint",                           # balanced | stamina | sprint
+        "agenda": "",                                # name of a saved agenda in My Agendas ("" = keep the game's)
+    },
     "tp": {"wait_min": [25, 45], "guess_after": 3, "guess_window_min": 10},
     "card": {
         "id": 0,            # GameTora ID of the support card to borrow (0 = not chosen yet)

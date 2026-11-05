@@ -22,7 +22,7 @@ import customtkinter as ctk
 from PIL import Image
 
 from . import __version__, config, tools
-from .engine import Bot, prepare_rules
+from .engine import Bot, agenda_slug, prepare_rules, rule_options
 from .logger import log, setup as setup_logging
 from .schedule import Schedule
 from .vision import load_templates
@@ -106,14 +106,15 @@ class App(ctk.CTk):
         self._load_fonts()
 
         self.title("UmaBot")
-        self.geometry("980x640")
-        self.minsize(900, 600)
+        self.geometry("980x720")
+        self.minsize(900, 660)
         self._set_icon()
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.bind("<F8>", lambda e: self._toggle())
 
         self._apply_mode()
+        self._refresh_agenda()
         self._refresh_card()
         self._refresh_schedule()
         self._refresh_status()
@@ -197,7 +198,7 @@ class App(ctk.CTk):
 
     def _build(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(5, weight=1)
+        self.grid_rowconfigure(6, weight=1)
         pad = 28
 
         # header
@@ -225,7 +226,7 @@ class App(ctk.CTk):
         self.headline.grid(row=0, column=1, sticky="ew")
         self.subline = self._label(top, "", self.f_body, 14, INK_SOFT, anchor="w", justify="left")
         self.subline.grid(row=1, column=1, sticky="ew")
-        self.setup_line = self._label(top, "", self.f_medium, 13, GOLD, anchor="w", justify="left")
+        self.setup_line = self._label(top, "", self.f_medium, 13, GOLD, anchor="w", justify="left", wraplength=600)
         self.setup_line.grid(row=2, column=1, sticky="ew", pady=(2, 0))
 
         act = ctk.CTkFrame(top, fg_color="transparent")
@@ -272,12 +273,32 @@ class App(ctk.CTk):
                       font=self.font(self.f_body, 13), text_color=INK_SOFT, progress_color=TURF,
                       button_color=RAIL, button_hover_color=RAIL, fg_color=LINE).grid(row=0, column=6, sticky="e")
 
+        # career set-up: who trains, and how
+        car = ctk.CTkFrame(self, fg_color="transparent")
+        car.grid(row=4, column=0, sticky="ew", padx=pad, pady=(12, 0))
+        car.grid_columnconfigure(4, weight=1)
+        names = self._trainee_names()
+        prefs = list(self.cfg["training"].get("trainees", [])) + ["", ""]
+        self.trainee1 = ctk.StringVar(value=self._tname(prefs[0]) or (names[0] if names else "None"))
+        self.trainee2 = ctk.StringVar(value=self._tname(prefs[1]) or "None")
+        self._label(car, "Trains", self.f_body, 14).grid(row=0, column=0, padx=(0, 8))
+        self._menu(car, self.trainee1, names or ["None"]).grid(row=0, column=1)
+        self._label(car, "or else", self.f_body, 14, INK_SOFT).grid(row=0, column=2, padx=8)
+        self._menu(car, self.trainee2, ["None"] + names).grid(row=0, column=3)
+        self._label(car, "Focus", self.f_body, 14).grid(row=0, column=5, padx=(0, 10))
+        self.focus_var = ctk.StringVar(value=self.cfg["training"].get("focus", "sprint").title())
+        ctk.CTkSegmentedButton(car, values=["Balanced", "Stamina", "Sprint"], variable=self.focus_var,
+                               command=lambda v: self._training_changed(), font=self.font(self.f_medium, 13),
+                               selected_color=TURF, selected_hover_color=TURF, unselected_color=PAPER,
+                               unselected_hover_color=LINE, fg_color=LINE, text_color=INK,
+                               corner_radius=8, height=32).grid(row=0, column=6, sticky="e")
+
         self.rules_h = tkinter.Frame(self, height=1, bd=0, highlightthickness=0)  # plain hairline
-        self.rules_h.grid(row=4, column=0, sticky="ew", padx=pad, pady=(22, 0))
+        self.rules_h.grid(row=5, column=0, sticky="ew", padx=pad, pady=(20, 0))
 
         # bottom: the card on the left, what happened on the right
         bottom = ctk.CTkFrame(self, fg_color="transparent")
-        bottom.grid(row=5, column=0, sticky="nsew", padx=pad, pady=(16, 22))
+        bottom.grid(row=6, column=0, sticky="nsew", padx=pad, pady=(16, 22))
         bottom.grid_columnconfigure(2, weight=1)
         bottom.grid_rowconfigure(0, weight=1)
         self._build_card(bottom)
@@ -317,6 +338,20 @@ class App(ctk.CTk):
         self.card_site = self._link(hint, "GameTora", lambda: webbrowser.open(GAMETORA_SUPPORTS))
         self.card_site.grid(row=0, column=1, sticky="w", padx=(4, 0))
 
+        self._label(box, "Agenda", self.f_display, 18).grid(row=5, column=0, columnspan=2, sticky="w", pady=(18, 0))
+        self.agenda_entry = self._entry(box, placeholder_text="Name of a saved agenda (optional)", height=34)
+        self.agenda_entry.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        if self.cfg["training"].get("agenda"):
+            self.agenda_entry.insert(0, self.cfg["training"]["agenda"])
+        self.agenda_entry.bind("<FocusOut>", lambda e: self._agenda_changed(), add="+")
+        self.agenda_entry.bind("<Return>", lambda e: self._agenda_changed())
+        ahint = ctk.CTkFrame(box, fg_color="transparent")
+        ahint.grid(row=7, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.agenda_msg = self._label(ahint, "", self.f_body, 13, INK_SOFT, justify="left", wraplength=330)
+        self.agenda_msg.grid(row=0, column=0, sticky="w")
+        self.agenda_teach = self._link(ahint, "Show it to UmaBot", self._teach_agenda)
+        self.agenda_teach.grid(row=1, column=0, sticky="w")
+
     def _build_activity(self, master):
         box = ctk.CTkFrame(master, fg_color="transparent")
         box.grid(row=0, column=2, sticky="nsew")
@@ -332,6 +367,68 @@ class App(ctk.CTk):
                                      scrollbar_button_color=LINE, scrollbar_button_hover_color=INK_SOFT)
         self.logbox.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(10, 0))
         self.logbox.configure(state="disabled")
+
+    def _menu(self, master, var, values):
+        return ctk.CTkOptionMenu(master, variable=var, values=values, command=lambda v: self._training_changed(),
+                                 width=170, height=32, corner_radius=8, fg_color=PAPER, button_color=LINE,
+                                 button_hover_color=INK_SOFT, text_color=INK, font=self.font(self.f_medium, 13),
+                                 dropdown_fg_color=PAPER, dropdown_text_color=INK, dropdown_hover_color=LINE,
+                                 dropdown_font=self.font(self.f_body, 13))
+
+    def _trainee_names(self):
+        tpls = load_templates(self.base)
+        ids = sorted(n[len("trainee_"):-len("_banner")] for n in tpls if n.startswith("trainee_") and n.endswith("_banner"))
+        self._trainee_ids = {self._tname(i): i for i in ids}
+        return list(self._trainee_ids)
+
+    @staticmethod
+    def _tname(tid):
+        return tid.replace("_", " ").title() if tid else ""
+
+    def _training_changed(self):
+        picks = []
+        for v in (self.trainee1.get(), self.trainee2.get()):
+            tid = self._trainee_ids.get(v)
+            if tid and tid not in picks:
+                picks.append(tid)
+        config.save_settings(self.base, {"training": {"trainees": picks, "focus": self.focus_var.get().lower()}})
+        self.cfg = config.load(self.cfg_path)
+
+    def _agenda_changed(self):
+        name = self.agenda_entry.get().strip()
+        if name != self.cfg["training"].get("agenda", ""):
+            config.save_settings(self.base, {"training": {"agenda": name}})
+            self.cfg = config.load(self.cfg_path)
+            if self.thread:
+                log.info("agenda saved, it applies the next time you press Start")
+        self._refresh_agenda()
+        self._refresh_status()
+
+    def _refresh_agenda(self):
+        name = self.cfg["training"].get("agenda", "")
+        known = f"agenda_{agenda_slug(name)}" in load_templates(self.base)
+        if not name:
+            self.agenda_msg.configure(text="Empty: uses the agenda already set in the game.", text_color=INK_SOFT)
+            self.agenda_teach.grid_remove()
+        elif known:
+            self.agenda_msg.configure(text="Loaded from My Agendas before every run.", text_color=INK_SOFT)
+            self.agenda_teach.grid_remove()
+        else:
+            self.agenda_msg.configure(text="UmaBot doesn't know this agenda yet. Open My Agendas in the game so it "
+                                           "shows on screen, then:", text_color=GOLD)
+            self.agenda_teach.grid()
+
+    def _teach_agenda(self):
+        name = self.agenda_entry.get().strip()
+        if not name:
+            return
+        try:
+            ok = tools.teach_agenda(config.load(self.cfg_path), name)
+            log.info(f"agenda '{name}' saved" if ok else "agenda not saved")
+        except SystemExit as e:
+            log.info(str(e.code))
+        self._refresh_agenda()
+        self._refresh_status()
 
     # ------------------------------------------------------------ the track
     def _draw_track(self):
@@ -472,10 +569,15 @@ class App(ctk.CTk):
     # ------------------------------------------------------------ status
     def _refresh_status(self):
         tpls = load_templates(self.base)
-        rules = prepare_rules(self.cfg["rule"], lambda n: n in tpls, self.cfg["card"]["templates"])
+        rules = [r for r in prepare_rules(self.cfg["rule"], lambda n: n in tpls, self.cfg["card"]["templates"],
+                                          *rule_options(self.cfg)) if not r.unused]
         ready, total = sum(r.enabled for r in rules), len(rules)
-        self.setup_line.configure(
-            text="" if ready == total else f"{ready} of {total} game screens are set up. The others are skipped for now.")
+        if self.bot and self.bot.notices:
+            self.setup_line.configure(text=self.bot.notices[-1], text_color=GOLD)
+        else:
+            self.setup_line.configure(
+                text="" if ready == total else f"{ready} of {total} game screens are set up. The others are skipped for now.",
+                text_color=GOLD)
         running = self.thread is not None
         if running and self.bot:
             head, kind = self.bot.status, self.bot.status_kind

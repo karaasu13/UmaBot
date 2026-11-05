@@ -58,14 +58,19 @@ discord_webhook = ""            # optional: webhook URL to get notified when the
 #  if_not_seen   templates that must NOT be on screen
 #  any_of        click the first of these that is visible
 #  click         where to click (defaults to the first if_seen template)
-#  action        click | stop | card | wait_tp | center
+#  action        click | stop | card | trainee | agenda | wait_tp | center
 #  starts_run    only happens inside the schedule
 #  counts_run    counts as a new run
 #  checks_tp     starts a run only if there's enough TP (used to notice that TP ran out)
+#  once_per_run  fires at most once per run
+#  only_if       only used when that option is on (load_agenda: an agenda name is set in the app)
+#  notify        message shown in the app (and on Discord) when it fires
+#  {focus}       the training focus chosen in the app (balanced, stamina or sprint)
 #
 #  Rules that use templates you don't have yet disable themselves (see "check").
 # ============================================================================
 
+# ---- safety --------------------------------------------------------------------
 [[rule]]
 name = "Stop if about to spend carats"
 if_seen = ["stop_carats"]
@@ -77,9 +82,9 @@ if_seen = ["stop_veterans_full"]
 action = "stop"
 
 [[rule]]
-name = "Out of TP: cancel and wait"
+name = "Out of TP: close Recover TP and wait"
 if_seen = ["tp_popup"]
-click = "cancel"
+click = "close"
 action = "wait_tp"
 
 [[rule]]
@@ -92,6 +97,23 @@ name = "Title screen"
 if_seen = ["title_screen"]
 action = "center"
 
+# ---- starting a run --------------------------------------------------------------
+[[rule]]
+name = "Choose the trainee"
+if_seen = ["trainee_select"]
+action = "trainee"
+
+[[rule]]
+name = "Pick the legacies automatically"
+if_seen = ["legacy_empty"]
+click = "auto_select"
+notify = "No legacies were set, so they were picked automatically. Next time choose parents with the best aptitudes for farming (aim for A everywhere)."
+
+[[rule]]
+name = "Confirm the automatic legacies"
+if_seen = ["auto_select_dialog"]
+click = "ok"
+
 [[rule]]
 name = "Pick the support card"
 if_seen = ["friend_list"]
@@ -102,31 +124,56 @@ name = "Open the friend list"
 if_seen = ["empty_friend_slot"]
 
 [[rule]]
-name = "Start career"
-if_seen = ["start_career"]
-if_not_seen = ["empty_friend_slot"]
-starts_run = true
-checks_tp = true
+name = "Switch to Independent Training"
+if_seen = ["final_confirmation", "it_tab_off"]
+click = "it_tab_off"
 
 [[rule]]
-name = "Confirm start (spends 30 TP)"
-if_seen = ["confirm_start"]
+name = "Training focus"
+if_seen = ["final_confirmation", "focus_{focus}_off"]
+click = "focus_{focus}_off"
+
+[[rule]]
+name = "Open the agenda"
+if_seen = ["final_confirmation", "agenda_edit"]
+click = "agenda_edit"
+once_per_run = true
+only_if = "load_agenda"
+
+[[rule]]
+name = "Open My Agendas"
+if_seen = ["agenda_window", "my_agendas_button"]
+click = "my_agendas_button"
+once_per_run = true
+only_if = "load_agenda"
+
+[[rule]]
+name = "Load the saved agenda"
+if_seen = ["my_agendas_window"]
+action = "agenda"
+once_per_run = true
+only_if = "load_agenda"
+
+[[rule]]
+name = "Start Independent Training (spends 30 TP)"
+if_seen = ["final_confirmation", "it_start"]
+click = "it_start"
 starts_run = true
 counts_run = true
+
+[[rule]]
+name = "Start career"
+if_seen = ["start_career"]
+if_not_seen = ["empty_friend_slot", "final_confirmation"]
+starts_run = true
+checks_tp = true
 
 [[rule]]
 name = "Go to Career"
 if_seen = ["home_career"]
 starts_run = true
 
-[[rule]]
-name = "Independent training"
-if_seen = ["independent_training"]
-
-[[rule]]
-name = "Confirm independent training"
-if_seen = ["confirm_independent_training"]
-
+# ---- end of a run --------------------------------------------------------------
 [[rule]]
 name = "Complete career"
 if_seen = ["complete_career"]
@@ -149,6 +196,7 @@ click = "confirm"
 name = "Back to Home"
 if_seen = ["to_home"]
 
+# ---- everything else: Next, OK, Close ---------------------------------------------
 [[rule]]
 name = "Generic buttons"
 any_of = ["next", "ok", "close", "next2", "skip", "skip_big"]

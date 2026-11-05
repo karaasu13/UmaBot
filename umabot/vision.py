@@ -302,6 +302,21 @@ class Vision:
             self._lock_scale(frame, name, m)
         return m
 
+    def find_in(self, frame, name, x0, y0, x1, y1, threshold=None):
+        """Like find, but only inside a rectangle (reference coordinates)."""
+        tpl = self.templates.get(name)
+        if tpl is None:
+            return None
+        H, W = frame.img.shape[:2]
+        x0, y0, x1, y1 = (max(0, round(x0)), max(0, round(y0)), min(W, round(x1)), min(H, round(y1)))
+        val, loc = similarity(frame.img[y0:y1, x0:x1], tpl)
+        if val < (threshold if threshold is not None else self.thresholds.get(name, self.threshold)):
+            return None
+        h, w = tpl.shape[:2]
+        m = frame.to_screen(x0 + loc[0] + w / 2, y0 + loc[1] + h / 2, w, h)
+        m.score = val
+        return m
+
     def score(self, frame, name):
         return self.measure(frame, name)[0] if name in self.templates else None
 
