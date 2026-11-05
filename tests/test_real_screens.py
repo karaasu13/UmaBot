@@ -34,6 +34,7 @@ START = {
     "s14_agenda_loaded": "close",
     "s15_trainee_condor": "Choose the trainee",
     "s16_recover_tp": "close",
+    "s17_tp_not_enough": "no",  # never Restore
 }
 END = {
     "10_training_log": "ok",
@@ -272,3 +273,13 @@ def test_crop_check_refuses_bad_boxes(base):
     frame = screen_vision(base, "s13_my_agendas").capture()
     assert "bigger" in tools.check_agenda(cfg, frame, (160, 300, 300, 12))   # just a thin strip of the name
     assert tools.check_agenda(cfg, frame, (700, 100, 200, 100))              # not an agenda at all
+
+
+def test_not_enough_tp_says_no_and_waits(base):
+    bot, vision, mouse = bot_on(base, "s17_tp_not_enough")
+    rule, target = target_of(bot, vision)
+    assert rule.name.startswith("Out of TP: say No") and target == "no"
+    wait = bot.execute(rule, target, vision.capture())
+    assert wait >= 60 and len(mouse.clicks) == 1
+    x, y = mouse.clicks[0]
+    assert x < 320 and 380 < y < 430  # the No button, left; Restore is on the right

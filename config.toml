@@ -80,6 +80,13 @@ action = "stop"
 optional = true
 
 [[rule]]
+name = "Out of TP: say No to restoring TP and wait"
+# "You need N more TP to start a Career playthrough. Restore TP?" — never Restore (it spends items)
+if_seen = ["tp_not_enough"]
+click = "no"
+action = "wait_tp"
+
+[[rule]]
 name = "Out of TP: close Recover TP and wait"
 if_seen = ["tp_popup"]
 click = "close"
