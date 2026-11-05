@@ -80,7 +80,7 @@ The schedule's nightly pause doesn't cost runs: TP keeps refilling (a full bar t
 - **Out of TP?** It cancels and waits. It never uses Toughness items or carats.
 - **Stop anytime** with the Stop button, or fling the mouse to the top-left corner of the screen.
 - **Leaves a trail:** screenshots of anything unusual go to the `logs` folder (button *Logs*). It can also ping you on
-  Discord: set `discord_webhook` in `config.toml`.
+  Discord: press **Discord alerts** at the top of the app, paste a channel webhook and send a test.
 
 ## ❓ FAQ
 

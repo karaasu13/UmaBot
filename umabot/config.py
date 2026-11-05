@@ -54,6 +54,7 @@ DEFAULTS = {
         "max_repeats": 25,
         "unknown_screen_min": 40,
         "discord_webhook": "",
+        "discord_each_run": False,
         "stop_on_user_input": True,
     },
     "rule": [],

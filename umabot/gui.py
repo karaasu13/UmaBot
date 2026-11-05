@@ -23,7 +23,7 @@ from PIL import Image, ImageTk
 
 from . import __version__, config, tools
 from .engine import Bot, counted, prepare_rules, rule_options
-from .logger import log, setup as setup_logging
+from .logger import send_discord, log, setup as setup_logging
 from .schedule import Schedule
 from .vision import load_templates
 from .watch import InputWatch
@@ -73,6 +73,10 @@ HELP = """
   UmaBot checks the box right away. To redo it later, press "Show it again".
 - Free veteran spaces: count them in the game. UmaBot counts down every run, warns at 5 and stops at 0.
 - Plays from / to: the hours it may start runs. They shift a little every day and there are a few breaks.
+
+# Discord alerts
+- Press "Discord alerts" at the top: paste a webhook of one of your channels (channel settings > Integrations
+  > Webhooks > New Webhook > Copy Webhook URL), send a test and Save. UmaBot writes there when it stops or needs you.
 
 # Starting and stopping
 - Press "Check the game screen" first: Activity shows what UmaBot sees and what it would press.
@@ -149,13 +153,16 @@ class App(ctk.CTk):
         self.geometry(f"980x{max(560, h)}")
         self.minsize(900, 560)
         self._set_icon()
+        self.compact = False
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Configure>", self._on_resize, add="+")
         self.bind("<F8>", lambda e: self._toggle())
 
         self._apply_mode()
         self._upgrade_card()
         self._refresh_agenda()
+        self._refresh_discord()
         self._refresh_veterans()
         self._refresh_card()
         self._refresh_schedule()
@@ -249,7 +256,7 @@ class App(ctk.CTk):
         pad = 28
 
         # header
-        head = ctk.CTkFrame(self, fg_color="transparent")
+        head = self._head = ctk.CTkFrame(self, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=pad, pady=(18, 0))
         head.grid_columnconfigure(1, weight=1)
         try:
@@ -260,12 +267,14 @@ class App(ctk.CTk):
             pass
         self._label(head, "UmaBot", self.f_display, 24).grid(row=0, column=1, sticky="w")
         self._link(head, "How to use", self._show_help, size=12).grid(row=0, column=2, sticky="e", padx=(0, 16))
+        self.discord_link = self._link(head, "Discord alerts", self._show_discord, size=12)
+        self.discord_link.grid(row=0, column=3, sticky="e", padx=(0, 16))
         self.mode_link = self._link(head, "", self._switch_mode, size=12)
-        self.mode_link.grid(row=0, column=3, sticky="e", padx=(0, 16))
-        self._label(head, f"v{__version__}", self.f_body, 12, INK_SOFT).grid(row=0, column=4, sticky="e")
+        self.mode_link.grid(row=0, column=4, sticky="e", padx=(0, 16))
+        self._label(head, f"v{__version__}", self.f_body, 12, INK_SOFT).grid(row=0, column=5, sticky="e")
 
         # status + the one button
-        top = ctk.CTkFrame(self, fg_color="transparent")
+        top = self._top = ctk.CTkFrame(self, fg_color="transparent")
         top.grid(row=1, column=0, sticky="ew", padx=pad, pady=(22, 10))
         top.grid_columnconfigure(1, weight=1)
         self.status_bar = ctk.CTkFrame(top, width=5, height=44, corner_radius=3, fg_color=INK_SOFT)
@@ -285,18 +294,20 @@ class App(ctk.CTk):
                                         font=self.font(self.f_display, 22))
         self.toggle_btn.grid(row=0, column=0, sticky="e")
         self.minimise = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(act, text="Hide UmaBot while it plays", variable=self.minimise,
+        self._cb_hide = ctk.CTkCheckBox(act, text="Hide UmaBot while it plays", variable=self.minimise,
                         font=self.font(self.f_body, 13), text_color=INK_SOFT, fg_color=SOLID, hover_color=SOLID,
                         checkmark_color=ON_SOLID,
                         border_color=LINE, border_width=2, checkbox_width=18, checkbox_height=18,
-                        corner_radius=4).grid(row=1, column=0, sticky="e", pady=(10, 0))
+                        corner_radius=4)
+        self._cb_hide.grid(row=1, column=0, sticky="e", pady=(10, 0))
         self.watch_input = ctk.BooleanVar(value=bool(self.cfg["safety"].get("stop_on_user_input", True)))
-        ctk.CTkCheckBox(act, text="Stop when I use the mouse or keyboard", variable=self.watch_input,
+        self._cb_watch = ctk.CTkCheckBox(act, text="Stop when I use the mouse or keyboard", variable=self.watch_input,
                         command=lambda: config.save_settings(self.base, {"safety": {
                             "stop_on_user_input": bool(self.watch_input.get())}}),
                         font=self.font(self.f_body, 13), text_color=INK_SOFT, fg_color=SOLID, hover_color=SOLID,
                         checkmark_color=ON_SOLID, border_color=LINE, border_width=2, checkbox_width=18,
-                        checkbox_height=18, corner_radius=4).grid(row=2, column=0, sticky="e", pady=(6, 0))
+                        checkbox_height=18, corner_radius=4)
+        self._cb_watch.grid(row=2, column=0, sticky="e", pady=(6, 0))
 
         # today's track
         self.track = ctk.CTkCanvas(self, height=96, bg=self.col(CHALK), highlightthickness=0, bd=0)
@@ -304,7 +315,7 @@ class App(ctk.CTk):
         self.track.bind("<Configure>", lambda e: self._draw_track())
 
         # schedule, written as a sentence
-        sch = ctk.CTkFrame(self, fg_color="transparent")
+        sch = self._sch = ctk.CTkFrame(self, fg_color="transparent")
         sch.grid(row=3, column=0, sticky="ew", padx=pad, pady=(6, 0))
         sch.grid_columnconfigure(5, weight=1)
         s = self.cfg["schedule"]
@@ -329,7 +340,7 @@ class App(ctk.CTk):
                       button_color=RAIL, button_hover_color=RAIL, fg_color=LINE).grid(row=0, column=6, sticky="e")
 
         # career set-up: who trains, and how
-        car = ctk.CTkFrame(self, fg_color="transparent")
+        car = self._car = ctk.CTkFrame(self, fg_color="transparent")
         car.grid(row=4, column=0, sticky="ew", padx=pad, pady=(12, 0))
         car.grid_columnconfigure(4, weight=1)
         names = self._trainee_names()
@@ -347,7 +358,7 @@ class App(ctk.CTk):
                                selected_color=TURF, selected_hover_color=TURF, unselected_color=PAPER,
                                unselected_hover_color=LINE, fg_color=LINE, text_color=INK,
                                corner_radius=8, height=32).grid(row=0, column=6, sticky="e")
-        row2 = ctk.CTkFrame(car, fg_color="transparent")
+        row2 = self._row2 = ctk.CTkFrame(car, fg_color="transparent")
         row2.grid(row=1, column=0, columnspan=7, sticky="ew", pady=(10, 0))
         row2.grid_columnconfigure(3, weight=1)
         self._label(row2, "Agenda", self.f_body, 14).grid(row=0, column=0, padx=(0, 8))
@@ -380,7 +391,7 @@ class App(ctk.CTk):
         self.rules_h.grid(row=5, column=0, sticky="ew", padx=pad, pady=(20, 0))
 
         # bottom: the card on the left, what happened on the right
-        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom = self._bottom = ctk.CTkFrame(self, fg_color="transparent")
         bottom.grid(row=6, column=0, sticky="nsew", padx=pad, pady=(16, 22))
         bottom.grid_columnconfigure(2, weight=1)
         bottom.grid_rowconfigure(0, weight=1)
@@ -559,18 +570,149 @@ class App(ctk.CTk):
         self._refresh_agenda()
         self._refresh_status()
 
+    # ------------------------------------------------------------ Discord
+    def _show_discord(self):
+        if getattr(self, "_discord", None) is not None and self._discord.winfo_exists():
+            self._discord.focus()
+            return
+        win = self._discord = ctk.CTkToplevel(self, fg_color=CHALK)
+        win.title("Discord alerts")
+        win.transient(self)
+        win.resizable(False, False)
+        self._label(win, "Discord alerts", self.f_display, 26).pack(anchor="w", padx=28, pady=(22, 4))
+        self._label(win, "UmaBot sends a message to a channel of yours when it stops, when it needs you "
+                    "(no legacies, few veteran spaces) and, if you want, after every run.",
+                    self.f_body, 14, INK_SOFT, justify="left", wraplength=520, anchor="w").pack(anchor="w", padx=28)
+        steps = ("1. In Discord, on your server, open the channel's settings (the gear next to its name).\n"
+                 "2. Integrations > Webhooks > New Webhook.\n"
+                 "3. Copy Webhook URL, paste it below and press Send a test.")
+        self._label(win, steps, self.f_body, 14, INK, justify="left", anchor="w").pack(anchor="w", padx=28, pady=(14, 10))
+        entry = self._entry(win, placeholder_text="https://discord.com/api/webhooks/...", width=520, height=36)
+        entry.pack(anchor="w", padx=28)
+        current = self.cfg["safety"].get("discord_webhook", "")
+        if current:
+            entry.insert(0, current)
+        each_run = ctk.BooleanVar(value=bool(self.cfg["safety"].get("discord_each_run", False)))
+        ctk.CTkCheckBox(win, text="Also a message after every run", variable=each_run,
+                        font=self.font(self.f_body, 13), text_color=INK, fg_color=SOLID, hover_color=SOLID,
+                        checkmark_color=ON_SOLID, border_color=LINE, border_width=2, checkbox_width=18,
+                        checkbox_height=18, corner_radius=4).pack(anchor="w", padx=28, pady=(12, 0))
+        msg = self._label(win, "", self.f_medium, 13, INK_SOFT, justify="left", wraplength=520, anchor="w")
+        msg.pack(anchor="w", padx=28, pady=(10, 0))
+        bar = ctk.CTkFrame(win, fg_color="transparent")
+        bar.pack(fill="x", padx=28, pady=(12, 22))
+
+        def url():
+            u = entry.get().strip()
+            ok = re.match(r"^https://(?:\w+\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+", u)
+            if u and not ok:
+                msg.configure(text="That isn't a Discord webhook link. It starts with https://discord.com/api/webhooks/",
+                              text_color=RED)
+                return None
+            return u
+
+        def save():
+            u = url()
+            if u is None:
+                return
+            config.save_settings(self.base, {"safety": {"discord_webhook": u, "discord_each_run": bool(each_run.get())}})
+            self.cfg["safety"]["discord_webhook"] = u
+            self.cfg["safety"]["discord_each_run"] = bool(each_run.get())
+            log.info("Discord alerts on" if u else "Discord alerts off")
+            self._refresh_discord()
+            win.destroy()
+
+        def test():
+            u = url()
+            if not u:
+                if u == "":
+                    msg.configure(text="Paste the webhook link first.", text_color=RED)
+                return
+            msg.configure(text="Sending...", text_color=INK_SOFT)
+            test_btn.configure(state="disabled")
+
+            def work():
+                problem = send_discord(u, "UmaBot: test message. Alerts will show up here.")
+                def done():
+                    if not win.winfo_exists():
+                        return
+                    test_btn.configure(state="normal")
+                    if problem:
+                        msg.configure(text=f"Didn't work: {problem}", text_color=RED)
+                    else:
+                        msg.configure(text="Sent! Check the channel, then Save.", text_color=TURF)
+                self.after(0, done)
+            threading.Thread(target=work, daemon=True).start()
+
+        ctk.CTkButton(bar, text="Save", command=save, width=110, height=36, corner_radius=8, fg_color=CORAL,
+                      hover_color=CORAL_HOVER, text_color=PAPER_TEXT, font=self.font(self.f_strong, 14)).pack(side="right")
+        test_btn = ctk.CTkButton(bar, text="Send a test", command=test, width=120, height=36, corner_radius=8,
+                                 fg_color="transparent", border_width=1, border_color=LINE, hover_color=LINE,
+                                 text_color=INK, font=self.font(self.f_strong, 14))
+        test_btn.pack(side="right", padx=(0, 10))
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.after(80, lambda: (win.lift(), entry.focus_set()))
+
+    def _refresh_discord(self):
+        on = bool(self.cfg["safety"].get("discord_webhook"))
+        self.discord_link.configure(text="Discord alerts: on" if on else "Discord alerts")
+
+    # ------------------------------------------------------------ fitting small screens
+    def _on_resize(self, e):
+        if e.widget is self and not getattr(self, "_resize_pending", False):
+            self._resize_pending = True
+            self.after(60, self._fit_height)
+
+    def _fit_height(self):
+        """Full screen on a laptop (or a big display scaling) leaves less height than the roomy layout needs:
+        then everything gets tighter instead of the bottom being cut off."""
+        self._resize_pending = False
+        h = self.winfo_height()
+        if h < 50:
+            return
+        k = ctk.ScalingTracker.get_window_scaling(self)
+        roomy = self.winfo_reqheight() / k if not self.compact else getattr(self, "_roomy_h", 750)
+        if not self.compact:
+            self._roomy_h = roomy
+        want = h / k < roomy - 4 if not self.compact else h / k < roomy + 20  # a little hysteresis
+        if want != self.compact:
+            self._set_density(want)
+
+    def _set_density(self, compact):
+        self.compact = compact
+        c = compact
+        self._head.grid_configure(pady=(8 if c else 18, 0))
+        self._top.grid_configure(pady=(8, 2) if c else (22, 10))
+        self.headline.configure(font=self.font(self.f_display, 28 if c else 36))
+        self.track.grid_configure(pady=(4 if c else 14, 0))
+        self._sch.grid_configure(pady=(2 if c else 6, 0))
+        self._car.grid_configure(pady=(6 if c else 12, 0))
+        self._row2.grid_configure(pady=(6 if c else 10, 0))
+        self.rules_h.grid_configure(pady=(10 if c else 20, 0))
+        self._bottom.grid_configure(pady=(8, 10) if c else (16, 22))
+        self.logbox.configure(height=40 if c else 120)
+        self.toggle_btn.configure(height=44 if c else 56)
+        self._cb_hide.grid_configure(pady=(6 if c else 10, 0))
+        self._cb_watch.grid_configure(pady=(4 if c else 6, 0))
+        if c:
+            self.vet_msg.grid_remove()
+        else:
+            self.vet_msg.grid()
+        self._draw_track()
+
     # ------------------------------------------------------------ the track
     def _draw_track(self):
         c = self.track
         C = self.col
         k = ctk.ScalingTracker.get_widget_scaling(self)  # Tk canvases don't follow the display scaling
-        if int(c.cget("height")) != round(96 * k):
-            c.configure(height=round(96 * k))
+        th, top, bottom = (72, 20, 42) if self.compact else (96, 26, 62)
+        if int(c.cget("height")) != round(th * k):
+            c.configure(height=round(th * k))
         c.delete("all")
         w = c.winfo_width()
         if w < 100:
             return
-        top, bottom = 26 * k, 62 * k
+        top, bottom = top * k, bottom * k
         mid, radius = (top + bottom) / 2, (bottom - top) / 2
         left, right = radius, w - radius
         hx = lambda h: left + (right - left) * max(0.0, min(24.0, h)) / 24

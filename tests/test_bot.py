@@ -458,3 +458,23 @@ def test_input_watch_ignores_umabots_own_movement():
     _t.sleep(0.6)  # bot finished; nobody touches anything
     w.stop()
     assert hits == []
+
+
+def test_discord_messages_report_problems_instead_of_crashing(monkeypatch):
+    import urllib.error
+    from umabot import logger
+    sent = []
+
+    class Ok:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(logger.urllib.request, "urlopen", lambda req, timeout: sent.append(req) or Ok())
+    assert logger.send_discord("https://discord.com/api/webhooks/1/abc", "hi") is None
+    assert sent[0].get_header("User-agent").startswith("UmaBot") and sent[0].data == b'{"content": "hi"}'
+
+    def gone(req, timeout):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", {}, None)
+    monkeypatch.setattr(logger.urllib.request, "urlopen", gone)
+    assert "doesn't know that webhook" in logger.send_discord("https://discord.com/api/webhooks/1/abc", "hi")
+    logger.notify("https://discord.com/api/webhooks/1/abc", "stopped")  # never raises

@@ -2,6 +2,7 @@
 import os
 import random
 import re
+import threading
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -12,7 +13,7 @@ import numpy as np
 
 from . import config
 from .human import Mouse, between
-from .logger import log, notify
+from .logger import log, notify, send_discord
 from .schedule import Schedule
 from .vision import Vision
 
@@ -361,6 +362,9 @@ class Bot:
             self.done_this_run = set()
             self._use_veteran_slot()
             log.info(f"run #{self.runs_today} of the day started")
+            if self.webhook() and self.cfg["safety"].get("discord_each_run"):
+                text = f"UmaBot: run #{self.runs_today} of the day started."
+                threading.Thread(target=send_discord, args=(self.webhook(), text), daemon=True).start()
         if r.checks_tp and self._looks_out_of_tp():
             r = Rule(name=r.name, if_seen=r.if_seen, action="wait_tp")
             log.info(f"'{r.name}' was pressed {self.cfg['tp']['guess_after']} times without a run starting: "

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import sys
+import urllib.error
 import urllib.request
 from logging.handlers import RotatingFileHandler
 
@@ -27,13 +28,26 @@ def setup(base):
     return folder
 
 
+def send_discord(webhook, text):
+    """Posts a message to a Discord webhook. Returns None if it went through, else a short reason."""
+    try:
+        req = urllib.request.Request(webhook, data=json.dumps({"content": text}).encode(), method="POST",
+                                     headers={"Content-Type": "application/json",
+                                              "User-Agent": "UmaBot (https://github.com/karaasu13/UmaBot)"})
+        urllib.request.urlopen(req, timeout=10).close()
+        return None
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403, 404):
+            return "Discord doesn't know that webhook (deleted, or the link is incomplete)."
+        return f"Discord answered {e.code}."
+    except Exception as e:
+        return f"couldn't reach Discord ({e})."
+
+
 def notify(webhook, msg):
     log.info(msg)
     if not webhook:
         return
-    try:
-        req = urllib.request.Request(webhook, data=json.dumps({"content": f"UmaBot: {msg}"}).encode(),
-                                     headers={"Content-Type": "application/json", "User-Agent": "UmaBot"})
-        urllib.request.urlopen(req, timeout=10).close()
-    except Exception as e:  # a failed notification must never take the bot down
-        log.info(f"(Discord notification failed: {e})")
+    problem = send_discord(webhook, f"UmaBot: {msg}")
+    if problem:  # a failed notification must never take the bot down
+        log.info(f"(Discord notification failed: {problem})")
