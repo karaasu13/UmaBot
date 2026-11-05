@@ -73,6 +73,9 @@ def enable_dpi_awareness():
 
 
 # ---------------------------------------------------------------- frames
+CALIBRATION_VERSION = 2
+
+
 class Frame:
     """A screenshot rescaled to the reference scale + a cache of the searches done on it."""
 
@@ -182,6 +185,10 @@ class Vision:
     def calibrated(self):
         return self.fixed_scale is not None or self.scale is not None
 
+    def measures_scale(self, name):
+        """Cards and agendas are the user's own crops (an agenda can be taught wrong): they never set the scale."""
+        return name not in self.card_names and not name.startswith("agenda_")
+
     def scale_guess(self, w, h):
         """The game's UI follows the window height (true for 16:9 at any size)."""
         return h / self.ref_h
@@ -199,7 +206,10 @@ class Vision:
     def _load_calibration(self):
         try:
             with open(self.calibration_path, encoding="utf-8") as f:
-                return {k: float(v) for k, v in json.load(f).items()}
+                data = json.load(f)
+            if data.get("_v") != CALIBRATION_VERSION:
+                return {}  # older versions could measure on an agenda crop: measure again (takes seconds)
+            return {k: float(v) for k, v in data.items() if k != "_v"}
         except (OSError, ValueError, AttributeError):
             return {}
 
@@ -208,7 +218,7 @@ class Vision:
         self._calibration[self._size] = round(s, 4)
         try:
             with open(self.calibration_path, "w", encoding="utf-8") as f:
-                json.dump(self._calibration, f, indent=2)
+                json.dump({"_v": CALIBRATION_VERSION, **self._calibration}, f, indent=2)
         except OSError:
             pass
         log.info(f"UI scale for a {self._size} window: {s:.3f} ({why})")
@@ -247,7 +257,7 @@ class Vision:
         return False
 
     def _sweep(self, frame):
-        names = [n for n in self.templates if n not in self.card_names]
+        names = [n for n in self.templates if self.measures_scale(n)]
         if not names:
             return False
         raw_small = shrink(frame.raw)
@@ -298,7 +308,7 @@ class Vision:
             return None
         m = frame.to_screen(loc[0] + w / 2, loc[1] + h / 2, w, h)
         m.score = val
-        if not self.calibrated and name not in self.card_names:
+        if not self.calibrated and self.measures_scale(name):
             self._lock_scale(frame, name, m)
         return m
 

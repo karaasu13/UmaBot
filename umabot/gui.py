@@ -19,7 +19,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as dtime
 
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageTk
 
 from . import __version__, config, tools
 from .engine import Bot, agenda_slug, counted, prepare_rules, rule_options
@@ -520,13 +520,39 @@ class App(ctk.CTk):
 
     def _teach_agenda(self):
         name = self.agenda_entry.get().strip()
-        if not name:
+        if not name or getattr(self, "_cropping", False):
             return
+        self._cropping = True
+
+        def hide():  # UmaBot must not be on top of the game in the screenshot
+            self.withdraw()
+            self.update()
+
+        frame = None
         try:
-            ok = tools.teach_agenda(config.load(self.cfg_path), name)
-            log.info(f"agenda '{name}' saved" if ok else "agenda not saved")
+            frame = tools.game_shot(config.load(self.cfg_path), hide)
         except SystemExit as e:
             log.info(str(e.code))
+        except Exception:
+            log.info("couldn't take the screenshot:\n" + traceback.format_exc())
+        finally:
+            self.deiconify()
+            self.lift()
+        if frame is None:
+            self._cropping = False
+            return
+        AgendaCrop(self, frame, name, self._agenda_cropped)
+
+    def _agenda_cropped(self, name, frame, box):
+        self._cropping = False
+        if box is None:
+            log.info("agenda not saved")
+        else:
+            try:
+                tools.save_agenda(config.load(self.cfg_path), name, frame, box)
+                log.info(f"agenda '{name}' saved")
+            except Exception:
+                log.info("couldn't save the agenda:\n" + traceback.format_exc())
         self._refresh_agenda()
         self._refresh_status()
 
@@ -980,3 +1006,108 @@ def selftest(cfg_path=None):
     app._draw_track()
     app._on_close()
     return 0
+
+
+class AgendaCrop(ctk.CTkToplevel):
+    """The game screenshot inside UmaBot: drag a box around the agenda, then Save (Enter) or Cancel (Esc).
+    It never blocks the app, and closing it is the same as Cancel."""
+
+    def __init__(self, app, frame, name, done):
+        super().__init__(app, fg_color=CHALK)
+        self.app, self.frame, self.name, self.done = app, frame, name, done
+        self.box, self.start, self.rect_id, self.finished = None, None, None, False
+        self.title(f"Show UmaBot the agenda '{name}'")
+        self.transient(app)
+        raw = frame.raw
+        h, w = raw.shape[:2]
+        max_w, max_h = self.winfo_screenwidth() * 0.85, self.winfo_screenheight() * 0.72
+        self.k = min(1.0, max_w / w, max_h / h)  # screen pixels per raw pixel
+        dw, dh = max(1, round(w * self.k)), max(1, round(h * self.k))
+        rgb = cv2_to_pil(raw).resize((dw, dh), Image.LANCZOS) if self.k < 1 else cv2_to_pil(raw)
+        self.photo = ImageTk.PhotoImage(rgb, master=self)
+
+        app._label(self, f"Drag a box around '{name}': its name and races, not the buttons.",
+                   app.f_strong, 16).pack(anchor="w", padx=20, pady=(16, 8))
+        self.canvas = tkinter.Canvas(self, width=dw, height=dh, highlightthickness=0, bd=0, cursor="crosshair")
+        self.canvas.pack(padx=20)
+        self.canvas.create_image(0, 0, image=self.photo, anchor="nw")
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", padx=20, pady=(10, 16))
+        self.hint = app._label(bar, "Enter saves, Esc cancels.", app.f_body, 13, INK_SOFT)
+        self.hint.pack(side="left")
+        self.save_btn = ctk.CTkButton(bar, text="Save", command=self.save, width=110, height=36, corner_radius=8,
+                                      fg_color=CORAL, hover_color=CORAL_HOVER, text_color=PAPER_TEXT,
+                                      font=app.font(app.f_strong, 14), state="disabled")
+        self.save_btn.pack(side="right")
+        ctk.CTkButton(bar, text="Cancel", command=self.cancel, width=100, height=36, corner_radius=8,
+                      fg_color="transparent", border_width=1, border_color=LINE, hover_color=LINE, text_color=INK,
+                      font=app.font(app.f_strong, 14)).pack(side="right", padx=(0, 10))
+
+        self.canvas.bind("<ButtonPress-1>", self.press)
+        self.canvas.bind("<B1-Motion>", self.drag)
+        self.canvas.bind("<ButtonRelease-1>", self.release)
+        self.bind("<Return>", lambda e: self.save())
+        self.bind("<Escape>", lambda e: self.cancel())
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+        self.after(60, self._focus)
+
+    def _focus(self):
+        try:
+            self.lift()
+            self.focus_force()
+            self.grab_set()  # the main window waits, but keeps drawing
+        except tkinter.TclError:
+            pass
+
+    def press(self, e):
+        self.start = (e.x, e.y)
+        if self.rect_id:
+            self.canvas.delete(self.rect_id)
+        self.rect_id = self.canvas.create_rectangle(e.x, e.y, e.x, e.y, outline="#E1707B", width=2, dash=(6, 3))
+
+    def drag(self, e):
+        if self.start:
+            x = min(max(e.x, 0), int(self.canvas.cget("width")))
+            y = min(max(e.y, 0), int(self.canvas.cget("height")))
+            self.canvas.coords(self.rect_id, self.start[0], self.start[1], x, y)
+
+    def release(self, e):
+        if not self.start:
+            return
+        self.drag(e)
+        x0, y0, x1, y1 = self.canvas.coords(self.rect_id)
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        self.start = None
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            self.box = None
+            self.save_btn.configure(state="disabled")
+            self.hint.configure(text="That box is too small: drag around the whole agenda.")
+            return
+        h, w = self.frame.raw.shape[:2]
+        rx, ry = round(x0 / self.k), round(y0 / self.k)
+        self.box = (rx, ry, min(w - rx, round((x1 - x0) / self.k)), min(h - ry, round((y1 - y0) / self.k)))
+        self.save_btn.configure(state="normal")
+        self.hint.configure(text="Looks good? Save. Or drag again.")
+
+    def _finish(self, box):
+        if self.finished:
+            return
+        self.finished = True
+        try:
+            self.grab_release()
+        except tkinter.TclError:
+            pass
+        self.destroy()
+        self.done(self.name, self.frame, box)
+
+    def save(self):
+        if self.box:
+            self._finish(self.box)
+
+    def cancel(self):
+        self._finish(None)
+
+
+def cv2_to_pil(img):
+    return Image.fromarray(img[:, :, ::-1].copy())

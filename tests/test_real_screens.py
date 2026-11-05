@@ -191,3 +191,26 @@ def test_agenda_not_in_the_list_stops_instead_of_running_without_it(base):
     assert bot.execute(rule, target, vision.capture()) is None
     assert len(mouse.scrolls) == 2 and mouse.scrolls[0][2] < 0 < mouse.scrolls[1][2]  # down, then up
     assert bot.status == "Stopped: agenda not found" and mouse.clicks == []
+
+
+def test_agenda_crops_never_set_the_ui_scale(base):
+    # a taught agenda can be a bad crop (once it was a picture of UmaBot itself): it must not measure the scale
+    tdir = os.path.join(base, "templates")
+    for f in os.listdir(tdir):
+        if f.endswith(".png") and f != "agenda_farmoguri.png":
+            os.remove(os.path.join(tdir, f))
+    cfg = config.load(base=base)
+    img = cv2.imread(os.path.join(SCREENS, "s13_my_agendas.png"))
+    vision = Vision(cfg, source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
+    frame = vision.capture()
+    assert not vision.maybe_calibrate(frame, force=True) and not vision.calibrated
+
+
+def test_old_calibration_files_are_measured_again(base):
+    import json
+    with open(os.path.join(base, "calibration.json"), "w") as f:
+        json.dump({"1106x622": 0.541}, f)  # older version: maybe measured on an agenda crop
+    assert Vision(config.load(base=base))._calibration == {}
+    with open(os.path.join(base, "calibration.json"), "w") as f:
+        json.dump({"_v": 2, "1106x622": 0.576}, f)
+    assert Vision(config.load(base=base))._calibration == {"1106x622": 0.576}

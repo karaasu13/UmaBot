@@ -317,21 +317,24 @@ def crop(cfg, name, file=None):
     print(f"Saved {dest} ({sw}x{sh} at reference scale)")
 
 
-def teach_agenda(cfg, name):
-    """With My Agendas open in the game: drag a box around the agenda (its name and races, not the buttons)."""
+def game_shot(cfg, hide=lambda: None, settle=0.6):
+    """A screenshot of the game with nothing on top of it: brings the game to the front, calls hide()
+    (UmaBot hides its own window), waits a moment, then captures."""
     v, f = _capture(cfg)
+    v.bring_to_front()
+    hide()
+    time.sleep(settle)
+    g = v.capture()
+    f = g if g is not None else f
+    if f.is_black() or f.rect[2] < 200:
+        sys.exit("The game looks minimised. Open My Agendas in the game and try again.")
     f, _ = ensure_scale(v, f)
-    raw = f.raw
-    k = min(1.0, 1500 / raw.shape[1], 850 / raw.shape[0])
-    small = cv2.resize(raw, None, fx=k, fy=k, interpolation=cv2.INTER_AREA) if k < 1 else raw
-    x, y, w, h = cv2.selectROI(f"Drag a box around '{name}' (name and races, not the buttons), then ENTER",
-                               small, showCrosshair=True)
-    cv2.destroyAllWindows()
-    if w == 0 or h == 0:
-        return False
-    box = tuple(round(val / k) for val in (x, y, w, h))
-    save_crop(raw, box, f.k, os.path.join(cfg["_base"], "templates", f"agenda_{agenda_slug(name)}.png"))
-    return True
+    return f
+
+
+def save_agenda(cfg, name, frame, box):
+    """box = (x, y, w, h) on frame.raw, around the agenda's name and races."""
+    save_crop(frame.raw, box, frame.k, os.path.join(cfg["_base"], "templates", f"agenda_{agenda_slug(name)}.png"))
 
 
 def position(cfg):
