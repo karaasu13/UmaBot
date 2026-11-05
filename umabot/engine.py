@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import cv2
+import numpy as np
 
 from . import config
 from .human import Mouse, between
@@ -48,25 +49,80 @@ class _Keep(dict):
         return "{" + key + "}"
 
 
+def read_gray(path):
+    """A single-channel image from disk (None if missing or unreadable)."""
+    try:
+        img = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_GRAYSCALE)
+    except (OSError, cv2.error, ValueError):
+        return None
+    return img
+
+
 def agenda_slug(name):
     return re.sub(r"[^a-z0-9]+", "_", (name or "").strip().lower()).strip("_")
 
 
-def agenda_button(vision, frame, name):
-    """(agenda match, its Load List match). Load List is the first one at or below the top of the agenda's box,
-    from its left edge to a bit past its right edge, so it's found whether or not the box covers the buttons.
-    (Save Here is above Load List and is never pressed.)"""
-    tpl = vision.templates.get(name)
-    if tpl is None:
-        return None, None
-    # full resolution and colour: agendas often start with the same races, only the name and numbers differ
-    m = vision.find_in(frame, name, 0, 0, frame.img.shape[1], frame.img.shape[0])
-    if not m:
-        return None, None
-    cx, cy = (m.x - frame.rect[0]) / frame.k, (m.y - frame.rect[1]) / frame.k
-    w, h = tpl.shape[1], tpl.shape[0]
-    left, top = cx - w / 2, cy - h / 2
-    return m, vision.find_top_in(frame, "load_list", left - 10, top - 15, cx + w / 2 + 320, top + 205)
+# An agenda in My Agendas is told apart by two things, both measured from its own Load List button
+# (reference coordinates, relative to the button's centre):
+#  - its name, in the green bar on top (white text: the blue channel has it, the green bar has none);
+#  - its block: race pictures, G1/G2/G3 numbers and Scheduled count.
+# Several agendas can share the same races, or names that contain each other ("MileMed" / "MileMed+A"),
+# so both must match.
+AGENDA_NAME_BOX = (-469, -120, -104, -95)
+AGENDA_BLOCK_BOX = (-470, -92, -60, 5)
+AGENDA_MARGIN = 12
+AGENDA_NAME_MIN, AGENDA_BLOCK_MIN = 0.85, 0.93
+
+
+def _ref_center(frame, m):
+    return (m.x - frame.rect[0]) / frame.k, (m.y - frame.rect[1]) / frame.k
+
+
+def _cut(img, cx, cy, box, margin=0):
+    x0, y0, x1, y1 = box
+    H, W = img.shape[:2]
+    return img[max(0, round(cy + y0 - margin)):min(H, round(cy + y1 + margin)),
+               max(0, round(cx + x0 - margin)):min(W, round(cx + x1 + margin))]
+
+
+def agenda_signature(frame, load_match):
+    """(name, block) images of the agenda whose Load List is load_match, or None if it's cut off."""
+    cx, cy = _ref_center(frame, load_match)
+    strip = _cut(frame.img, cx, cy, AGENDA_NAME_BOX)
+    block = _cut(frame.img, cx, cy, AGENDA_BLOCK_BOX)
+    want = lambda box: (box[3] - box[1] - 2, box[2] - box[0] - 2)
+    if strip.shape[0] < want(AGENDA_NAME_BOX)[0] or strip.shape[1] < want(AGENDA_NAME_BOX)[1] or \
+            block.shape[0] < want(AGENDA_BLOCK_BOX)[0] or block.shape[1] < want(AGENDA_BLOCK_BOX)[1]:
+        return None
+    b, g, r = (strip[:, :, i].astype(int) for i in range(3))
+    rows = np.nonzero(((g > 140) & (b < 110) & (r < 200)).mean(axis=1) > 0.5)[0]
+    if len(rows) < 10:
+        return None  # no green name bar here
+    name = strip[rows.min() + 2:rows.max() - 1, :300, 0].copy()
+    return name, block.copy()
+
+
+def agenda_scores(frame, load_match, name_tpl, block_tpl):
+    cx, cy = _ref_center(frame, load_match)
+    region = _cut(frame.img, cx, cy, AGENDA_NAME_BOX, AGENDA_MARGIN + 4)[:, :, 0]
+    blocks = _cut(frame.img, cx, cy, AGENDA_BLOCK_BOX, AGENDA_MARGIN)
+    score = lambda img, tpl: 0.0 if tpl.shape[0] > img.shape[0] or tpl.shape[1] > img.shape[1] else \
+        float(np.nan_to_num(cv2.matchTemplate(img, tpl, cv2.TM_CCOEFF_NORMED)).max())
+    return score(region, name_tpl), score(blocks, block_tpl)
+
+
+def agenda_name_path(base, slug):
+    return os.path.join(base, "templates", "agendas", f"{slug}_name.png")
+
+
+def find_agenda(vision, frame, name_tpl, block_tpl):
+    """The Load List of the agenda on screen that matches both the name and the block, or None."""
+    best = None
+    for lm in vision.find_all(frame, "load_list"):
+        n, b = agenda_scores(frame, lm, name_tpl, block_tpl)
+        if n >= AGENDA_NAME_MIN and b >= AGENDA_BLOCK_MIN and (best is None or n + b > best[0]):
+            best = (n + b, lm)
+    return best[1] if best else None
 
 
 def rule_options(cfg):
@@ -371,27 +427,29 @@ class Bot:
         return self._click_match(m, "next") if m else 1
 
     def load_agenda(self, marker=None):
-        """My Agendas: find the saved agenda, scrolling down the list (and back up if needed), and press its
-        Load List. Without the agenda no run starts: a run without it farms far fewer fans."""
+        """My Agendas: find the saved agenda (by its name and its races), scrolling down the list and back up
+        if needed, and press its Load List. Without it no run starts: a run without it farms far fewer fans."""
         agenda = self.cfg["training"].get("agenda")
-        name = f"agenda_{agenda_slug(agenda)}"
+        slug = agenda_slug(agenda)
+        block_tpl = self.vision.templates.get(f"agenda_{slug}")
+        name_tpl = read_gray(agenda_name_path(self.cfg["_base"], slug))
+        if block_tpl is None or name_tpl is None:
+            return self._agenda_stop(f"UmaBot doesn't know the agenda '{agenda}' well enough yet. Open My Agendas "
+                                     "in the game and press 'Show it to UmaBot' in UmaBot, then Start again.")
         direction, turned, scrolls = -1, False, 0
-        while name in self.vision.templates and scrolls < 40:
+        while scrolls < 60:
             if self.should_stop():
                 return None
             frame = self.vision.capture()
             if frame is None:
                 return 2
-            m, lm = agenda_button(self.vision, frame, name)
-            step = direction * 10
+            lm = find_agenda(self.vision, frame, name_tpl, block_tpl)
             if lm:
                 return self._click_match(lm, f"loading the agenda '{agenda}'")
-            if m:
-                step = direction * 3  # the box is in view but its button isn't yet: nudge
             if scrolls == 0:
                 log.info(f"looking for the agenda '{agenda}' in My Agendas")
             before = frame.small()
-            self.mouse.scroll(*self.scroll_point(frame, marker), step)
+            self.mouse.scroll(*self.scroll_point(frame, marker), direction * 5)
             self.sleep(self.rng.uniform(0.45, 0.75))
             scrolls += 1
             after = self.vision.capture()
@@ -400,8 +458,10 @@ class Bot:
                 if turned:
                     break
                 direction, turned = -direction, True  # end of the list: look the other way
-        msg = (f"Couldn't find the agenda '{agenda}' in My Agendas, so no run was started. Check the name, "
-               "or open My Agendas in the game and press 'Show it again' in UmaBot.")
+        return self._agenda_stop(f"Couldn't find the agenda '{agenda}' in My Agendas, so no run was started. Check "
+                                 "the name, or open My Agendas in the game and press 'Show it again' in UmaBot.")
+
+    def _agenda_stop(self, msg):
         self.set_status("Stopped: agenda not found", "error")
         self.notices.append(msg)
         notify(self.webhook(), msg)

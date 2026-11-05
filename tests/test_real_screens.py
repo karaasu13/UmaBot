@@ -5,6 +5,7 @@ import os
 import shutil
 
 import cv2
+import numpy as np
 import pytest
 
 from umabot import config, tools
@@ -74,10 +75,37 @@ def base(tmp_path):
     return str(tmp_path)
 
 
+def screen_vision(base, path):
+    img = cv2.imread(path if os.path.isabs(path) else os.path.join(SCREENS, path + ".png"))
+    vision = Vision(config.load(base=base), source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
+    vision.fixed_scale = SCALE
+    return vision
+
+
+AGENDAS = os.path.join(SCREENS, "agendas")
+# the user's own My Agendas lists: (screen, a box like the user drags, where its Load List is)
+TAUGHT = {
+    "farmoguri": (os.path.join(AGENDAS, "farmoguri.png"), (160, 200, 180, 85), 286),
+    "seiunsolv": (os.path.join(AGENDAS, "farmoguri.png"), (160, 308, 330, 95), 393),   # box covers the buttons
+    "longahh": (os.path.join(AGENDAS, "farmoguri.png"), (160, 430, 175, 50), 500),     # races only
+    "milemeda": (os.path.join(AGENDAS, "milemed.png"), (160, 215, 180, 85), 287),
+    "milemed": (os.path.join(AGENDAS, "milemed.png"), (160, 322, 180, 85), 394),
+    "sprintmed": (os.path.join(AGENDAS, "milemed.png"), (160, 430, 180, 85), 501),
+}
+
+
+def teach(base, agenda):
+    path, box, _ = TAUGHT[agenda]
+    cfg = config.load(base=base)
+    frame = screen_vision(base, path).capture()
+    assert tools.check_agenda(cfg, frame, box) is None
+    tools.save_agenda(cfg, agenda, frame, box)
+
+
 def bot_on(base, screen, **training):
     cfg = config.load(base=base)
     cfg["training"].update(training)
-    img = cv2.imread(os.path.join(SCREENS, screen + ".png"))
+    img = cv2.imread(screen if os.path.isabs(screen) else os.path.join(SCREENS, screen + ".png"))
     vision = Vision(cfg, source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
     vision.fixed_scale = SCALE  # some screenshots are cropped by a few pixels
     mouse = FakeMouse()
@@ -153,6 +181,7 @@ def test_training_focus_follows_the_setting(base):
 
 
 def test_loads_the_saved_agenda_once_per_run(base):
+    teach(base, "farmoguri")
     bot, vision, mouse = bot_on(base, "s11_final_independent", agenda="farmoguri")
     assert target_of(bot, vision)[1] == "agenda_edit"
     bot.execute(*target_of(bot, vision), vision.capture())
@@ -164,10 +193,8 @@ def test_loads_the_saved_agenda_once_per_run(base):
     bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda="farmoguri")
     rule, target = target_of(bot, vision)
     assert rule.name == "Load the saved agenda"
-    pt = tap_point(bot, vision, mouse, "s13")
-    x, y, w, h = where(vision, "agenda_farmoguri")
-    assert x + w / 2 < pt[0] < x + w / 2 + 120  # just right of the farmoguri box: its Load List
-    assert y < pt[1] < y + h / 2 + 20           # lower half of the box (Save Here is the upper half)
+    bot.execute(rule, target, vision.capture())
+    assert len(mouse.clicks) == 1 and abs(mouse.clicks[0][1] - 368) < 8  # farmoguri's Load List
 
 
 def test_unknown_agenda_name_is_reported_not_guessed(base):
@@ -183,9 +210,8 @@ def test_every_screen_is_covered():
 
 def test_agenda_not_in_the_list_stops_instead_of_running_without_it(base):
     # an agenda the bot knows, but that isn't in this (static) list: it scrolls both ways, then stops
-    other = cv2.imread(os.path.join(SCREENS, "s12_agenda_empty.png"))
-    cv2.imwrite(os.path.join(base, "templates", "agenda_other.png"), cv2.resize(other[300:360, 100:330], None, fx=1 / SCALE, fy=1 / SCALE))
-    bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda="other")
+    teach(base, "longahh")
+    bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda="longahh")
     rule, target = target_of(bot, vision)
     assert rule.name == "Load the saved agenda"
     assert bot.execute(rule, target, vision.capture()) is None
@@ -193,8 +219,16 @@ def test_agenda_not_in_the_list_stops_instead_of_running_without_it(base):
     assert bot.status == "Stopped: agenda not found" and mouse.clicks == []
 
 
+def test_agenda_shown_before_this_version_must_be_shown_again(base):
+    cv2.imwrite(os.path.join(base, "templates", "agenda_farmoguri.png"), np.full((60, 200, 3), 128, np.uint8))
+    bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda="farmoguri")
+    assert bot.load_agenda() is None and mouse.clicks == [] and "Show it to UmaBot" in bot.notices[-1]
+    assert not tools.agenda_known(base, "farmoguri")
+
+
 def test_agenda_crops_never_set_the_ui_scale(base):
     # a taught agenda can be a bad crop (once it was a picture of UmaBot itself): it must not measure the scale
+    teach(base, "farmoguri")
     tdir = os.path.join(base, "templates")
     for f in os.listdir(tdir):
         if f.endswith(".png") and f != "agenda_farmoguri.png":
@@ -217,29 +251,24 @@ def test_old_calibration_files_are_measured_again(base):
     assert Vision(config.load(base=base))._calibration == {"1106x622": 0.576}
 
 
-@pytest.mark.parametrize("agenda,box,load_y", [
-    ("sapporo", (158, 208, 175, 50), 261),     # races only, first in the list
-    ("farmoguri", (155, 298, 172, 92), 368),   # name and races
-    ("seiunsolv", (155, 405, 330, 95), 475),   # a box that also covers the buttons
-])
-def test_taught_agenda_loads_its_own_list(base, agenda, box, load_y):
-    cfg = config.load(base=base)
-    img = cv2.imread(os.path.join(SCREENS, "s13_my_agendas.png"))
-    vision = Vision(cfg, source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
-    vision.fixed_scale = SCALE
-    frame = vision.capture()
-    assert tools.check_agenda(cfg, frame, box) is None
-    tools.save_agenda(cfg, agenda, frame, box)
-    bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda=agenda)
-    bot.load_agenda()
-    assert len(mouse.clicks) == 1 and abs(mouse.clicks[0][1] - load_y) < 8
+@pytest.mark.parametrize("agenda", sorted(TAUGHT))
+def test_taught_agenda_is_loaded_only_where_it_is(base, agenda):
+    # several agendas share races (Niigata + Arima Kinen) or names ("MileMed" / "MileMed+A"): never the wrong one
+    teach(base, agenda)
+    screens = {os.path.join(AGENDAS, "farmoguri.png"): {"farmoguri": 286, "seiunsolv": 393, "longahh": 500},
+               os.path.join(AGENDAS, "milemed.png"): {"milemeda": 287, "milemed": 394, "sprintmed": 501},
+               os.path.join(SCREENS, "s13_my_agendas.png"): {"farmoguri": 368, "seiunsolv": 475}}
+    for screen, here in screens.items():
+        bot, vision, mouse = bot_on(base, screen, agenda=agenda)
+        bot.load_agenda()
+        if agenda in here:
+            assert len(mouse.clicks) == 1 and abs(mouse.clicks[0][1] - here[agenda]) < 8, screen
+        else:
+            assert mouse.clicks == [], screen
 
 
 def test_crop_check_refuses_bad_boxes(base):
     cfg = config.load(base=base)
-    img = cv2.imread(os.path.join(SCREENS, "s13_my_agendas.png"))
-    vision = Vision(cfg, source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
-    vision.fixed_scale = SCALE
-    frame = vision.capture()
+    frame = screen_vision(base, "s13_my_agendas").capture()
     assert "bigger" in tools.check_agenda(cfg, frame, (160, 300, 300, 12))   # just a thin strip of the name
     assert tools.check_agenda(cfg, frame, (700, 100, 200, 100))              # not an agenda at all

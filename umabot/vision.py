@@ -352,6 +352,26 @@ class Vision:
         m.score = float(res[ly, lx])
         return m
 
+    def find_all(self, frame, name, threshold=None):
+        """Every match of `name` on screen (top to bottom), full resolution."""
+        tpl = self.templates.get(name)
+        if tpl is None or tpl.shape[0] > frame.img.shape[0] or tpl.shape[1] > frame.img.shape[1]:
+            return []
+        res = cv2.matchTemplate(frame.img, tpl, cv2.TM_CCOEFF_NORMED)
+        res[~np.isfinite(res)] = 0
+        thr = threshold if threshold is not None else self.thresholds.get(name, self.threshold)
+        h, w = tpl.shape[:2]
+        out = []
+        while True:
+            _, val, _, (x, y) = cv2.minMaxLoc(res)
+            if val < thr:
+                break
+            m = frame.to_screen(x + w / 2, y + h / 2, w, h)
+            m.score = float(val)
+            out.append(m)
+            res[max(0, y - h // 2):y + h // 2 + 1, max(0, x - w // 2):x + w // 2 + 1] = 0
+        return sorted(out, key=lambda m: m.y)
+
     def score(self, frame, name):
         return self.measure(frame, name)[0] if name in self.templates else None
 

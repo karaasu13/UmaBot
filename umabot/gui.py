@@ -22,7 +22,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from . import __version__, config, tools
-from .engine import Bot, agenda_slug, counted, prepare_rules, rule_options
+from .engine import Bot, counted, prepare_rules, rule_options
 from .logger import log, setup as setup_logging
 from .schedule import Schedule
 from .vision import load_templates
@@ -477,7 +477,7 @@ class App(ctk.CTk):
 
     def _refresh_agenda(self):
         name = self.cfg["training"].get("agenda", "")
-        known = f"agenda_{agenda_slug(name)}" in load_templates(self.base)
+        known = tools.agenda_known(self.base, name)
         if not name:
             self.agenda_msg.configure(text="Set your farming agenda: without one the runs farm far fewer fans.",
                                       text_color=GOLD)

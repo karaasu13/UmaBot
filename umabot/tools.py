@@ -337,29 +337,51 @@ def game_shot(cfg, hide=lambda: None, settle=0.6):
     return f
 
 
-def check_agenda(cfg, frame, box):
-    """Before saving: would the bot find this box on this screenshot, and the agenda's Load List with it?
-    Returns None if all is well, else what to tell the user."""
-    from .engine import agenda_button
-    piece = crop_piece(frame.raw, box, frame.k)
-    if min(piece.shape[:2]) < 40:
-        return "Make the box bigger: the agenda's name and its race pictures."
+def _agenda_from_box(cfg, frame, box):
+    """The box only says which agenda: its Load List is the first one at or below the box's top.
+    Returns (vision, load match, (name, block)) with what's missing as None."""
+    from .engine import agenda_signature
     v = Vision(cfg, source=lambda: (frame.raw, frame.rect))
     v.fixed_scale = frame.k
-    v.templates["agenda__check"] = piece
     f = v.capture()
-    m, lm = agenda_button(v, f, "agenda__check")
-    if not m:
-        return "UmaBot can't recognise that box. Drag around the agenda's name and its race pictures."
-    if not lm:
-        return ("UmaBot can't see that agenda's Load List button. Scroll the list in the game so the whole "
-                "agenda shows, then try again.")
+    x, y, w, h = (val / frame.k for val in box)
+    lm = v.find_top_in(f, "load_list", x - 10, y - 15, x + w + 320, y + 205)
+    return v, f, lm, (agenda_signature(f, lm) if lm else None)
+
+
+def check_agenda(cfg, frame, box):
+    """Before saving: can the bot tell this agenda apart later? None if so, else what to tell the user."""
+    from .engine import find_agenda
+    if min(box[2], box[3]) / frame.k < 30:
+        return "Make the box bigger: drag around the agenda's name and its race pictures."
+    v, f, lm, sig = _agenda_from_box(cfg, frame, box)
+    if lm is None:
+        return ("UmaBot can't see a Load List button next to that box. Drag around one agenda of the list "
+                "(its name and race pictures).")
+    if sig is None:
+        return "That agenda is cut off. Scroll the list in the game so the whole agenda shows, then try again."
+    found = find_agenda(v, f, *sig)
+    if found is None or abs(found.y - lm.y) > 5:
+        return "UmaBot can't tell that agenda apart. Scroll so the whole agenda shows, then try again."
     return None
 
 
 def save_agenda(cfg, name, frame, box):
-    """box = (x, y, w, h) on frame.raw, around the agenda's name and races."""
-    save_crop(frame.raw, box, frame.k, os.path.join(cfg["_base"], "templates", f"agenda_{agenda_slug(name)}.png"))
+    """Saves the agenda's name bar and its block (races and numbers), measured from its Load List."""
+    from .engine import agenda_name_path
+    _, _, lm, sig = _agenda_from_box(cfg, frame, box)
+    if sig is None:
+        raise ValueError("no agenda at that box")
+    slug = agenda_slug(name)
+    _write_png(sig[1], os.path.join(cfg["_base"], "templates", f"agenda_{slug}.png"))
+    _write_png(sig[0], agenda_name_path(cfg["_base"], slug))
+
+
+def agenda_known(base, name):
+    from .engine import agenda_name_path
+    slug = agenda_slug(name)
+    return bool(slug) and os.path.exists(os.path.join(base, "templates", f"agenda_{slug}.png")) and \
+        os.path.exists(agenda_name_path(base, slug))
 
 
 def position(cfg):
