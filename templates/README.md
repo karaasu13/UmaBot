@@ -23,7 +23,7 @@ the order they happen. Use **PrtScn** in fullscreen, or **Alt+PrtScn** in window
 | 6 | Popup confirming the start (shows the TP cost) | `confirm_start` |
 | 7 | TP recovery window: tap the **+** next to the TP bar on the home screen (don't use anything). Without it the bot still notices when TP runs out | `tp_popup`, `cancel` |
 | 8 | Where Independent Training is turned on, plus its confirmation | `independent_training`, `confirm_independent_training` |
-| 9 | Every screen from the end of the career back to Home, one per click | `complete_career`, `ok`, `close`, … |
+| 9 | ✅ Every screen from the end of the career back to Home (done: training log, Complete Career, Finish, rank, sparks, details, rewards, To Home) | `ok`, `complete_career`, `finish`, `next`, `reroll_sparks`, `keep_sparks`, `confirm`, `close`, `to_home` |
 | 10 | Any popup that would spend carats (don't confirm it) | `stop_carats` |
 | 11 | When seen: veterans list full, connection error, title screen | `stop_veterans_full`, `connection_error` + `retry`, `title_screen` |
 

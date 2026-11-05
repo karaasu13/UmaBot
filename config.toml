@@ -132,5 +132,23 @@ name = "Complete career"
 if_seen = ["complete_career"]
 
 [[rule]]
+name = "Finish the career"
+if_seen = ["finish"]
+
+[[rule]]
+name = "Keep the sparks (never reroll: it costs 30 TP)"
+if_seen = ["reroll_sparks"]
+click = "confirm"
+
+[[rule]]
+name = "Confirm the sparks"
+if_seen = ["keep_sparks"]
+click = "confirm"
+
+[[rule]]
+name = "Back to Home"
+if_seen = ["to_home"]
+
+[[rule]]
 name = "Generic buttons"
-any_of = ["next", "next2", "ok", "close", "skip", "skip_big"]
+any_of = ["next", "ok", "close", "next2", "skip", "skip_big"]
