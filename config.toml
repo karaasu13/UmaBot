@@ -65,6 +65,7 @@ discord_webhook = ""            # optional: webhook URL to get notified when the
 #  once_per_run  fires at most once per run
 #  only_if       only used when that option is on (load_agenda: an agenda name is set in the app)
 #  notify        message shown in the app (and on Discord) when it fires
+#  optional      for rare screens: not counted as missing while its picture isn't there
 #  {focus}       the training focus chosen in the app (balanced, stamina or sprint)
 #
 #  Rules that use templates you don't have yet disable themselves (see "check").
@@ -72,14 +73,10 @@ discord_webhook = ""            # optional: webhook URL to get notified when the
 
 # ---- safety --------------------------------------------------------------------
 [[rule]]
-name = "Stop if about to spend carats"
-if_seen = ["stop_carats"]
-action = "stop"
-
-[[rule]]
 name = "Stop if the veterans list is full"
 if_seen = ["stop_veterans_full"]
 action = "stop"
+optional = true
 
 [[rule]]
 name = "Out of TP: close Recover TP and wait"
@@ -91,11 +88,7 @@ action = "wait_tp"
 name = "Connection error"
 if_seen = ["connection_error"]
 click = "retry"
-
-[[rule]]
-name = "Title screen"
-if_seen = ["title_screen"]
-action = "center"
+optional = true
 
 # ---- starting a run --------------------------------------------------------------
 [[rule]]

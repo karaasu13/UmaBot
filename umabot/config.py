@@ -35,6 +35,7 @@ DEFAULTS = {
         "trainees": ["oguri_cap", "el_condor_pasa"],  # preferred trainees, in order
         "focus": "sprint",                           # balanced | stamina | sprint
         "agenda": "",                                # name of a saved agenda in My Agendas ("" = keep the game's)
+        "veterans_free": -1,                         # free spaces in the veterans list (-1 = don't track)
     },
     "tp": {"wait_min": [25, 45], "guess_after": 3, "guess_window_min": 10},
     "card": {

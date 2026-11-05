@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from .config import cli_name, save_settings
-from .engine import Bot, agenda_slug, prepare_rules, rule_options
+from .engine import Bot, agenda_slug, counted, prepare_rules, rule_options
 from .schedule import Schedule
 from .vision import Vision, load_templates
 
@@ -195,8 +195,7 @@ def check(cfg):
     base = cfg["_base"]
     tpls = load_templates(base)
     print(f"Templates: {len(tpls)}  |  support card: {cfg['card'].get('name') or '(not chosen)'}\n")
-    rules = [r for r in prepare_rules(cfg["rule"], lambda n: n in tpls, cfg["card"]["templates"], *rule_options(cfg))
-             if not r.unused]
+    rules = counted(prepare_rules(cfg["rule"], lambda n: n in tpls, cfg["card"]["templates"], *rule_options(cfg)))
     missing = []
     for r in rules:
         extra = f"  -> missing: {', '.join(r.missing)}" if r.missing else ""

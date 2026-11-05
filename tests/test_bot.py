@@ -404,3 +404,23 @@ def test_repo_config_is_valid():
     cfg = config.load()
     prepare_rules(cfg["rule"], lambda n: True, cfg["card"]["templates"])
     assert len(cfg["rule"]) >= 10
+
+
+# ---------------------------------------------------------------- veterans list
+def test_veterans_count_down_and_block_new_runs_at_zero(world):
+    cfg, vision, _, rects, _ = world
+    cfg["training"]["veterans_free"] = 1
+    bot, mouse = make_bot(cfg, vision)
+    bot.step()  # "start" counts a run: the last free space is used
+    assert bot.veterans_free() == 0 and config.load(base=cfg["_base"])["training"]["veterans_free"] == 0
+    assert any("fills the veterans list" in n for n in bot.notices)
+    bot.step()  # no new run: only the generic button is pressed
+    assert inside(mouse.clicks[-1], rects["next"]) and bot.status == "Veterans list full"
+
+
+def test_veterans_not_tracked_by_default(world):
+    cfg, vision, _, rects, _ = world
+    bot, mouse = make_bot(cfg, vision)
+    bot.step()
+    bot.step()
+    assert bot.veterans_free() is None and inside(mouse.clicks[-1], rects["home_career"])

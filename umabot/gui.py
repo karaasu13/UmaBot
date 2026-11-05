@@ -22,7 +22,7 @@ import customtkinter as ctk
 from PIL import Image
 
 from . import __version__, config, tools
-from .engine import Bot, agenda_slug, prepare_rules, rule_options
+from .engine import Bot, agenda_slug, counted, prepare_rules, rule_options
 from .logger import log, setup as setup_logging
 from .schedule import Schedule
 from .vision import load_templates
@@ -106,8 +106,8 @@ class App(ctk.CTk):
         self._load_fonts()
 
         self.title("UmaBot")
-        self.geometry("980x720")
-        self.minsize(900, 660)
+        self.geometry("980x760")
+        self.minsize(900, 700)
         self._set_icon()
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -115,6 +115,7 @@ class App(ctk.CTk):
 
         self._apply_mode()
         self._refresh_agenda()
+        self._refresh_veterans()
         self._refresh_card()
         self._refresh_schedule()
         self._refresh_status()
@@ -292,6 +293,18 @@ class App(ctk.CTk):
                                selected_color=TURF, selected_hover_color=TURF, unselected_color=PAPER,
                                unselected_hover_color=LINE, fg_color=LINE, text_color=INK,
                                corner_radius=8, height=32).grid(row=0, column=6, sticky="e")
+        vet = ctk.CTkFrame(car, fg_color="transparent")
+        vet.grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
+        self._label(vet, "Free spaces in the veterans list", self.f_body, 14).grid(row=0, column=0, padx=(0, 10))
+        self.vet_entry = self._entry(vet, width=64, height=32, justify="center", placeholder_text="–")
+        self.vet_entry.grid(row=0, column=1)
+        free = self.cfg["training"].get("veterans_free", -1)
+        if isinstance(free, int) and free >= 0:
+            self.vet_entry.insert(0, str(free))
+        self.vet_entry.bind("<FocusOut>", lambda e: self._veterans_changed(), add="+")
+        self.vet_entry.bind("<Return>", lambda e: self._veterans_changed())
+        self.vet_msg = self._label(vet, "", self.f_body, 13, INK_SOFT, anchor="w")
+        self.vet_msg.grid(row=0, column=2, sticky="w", padx=(12, 0))
 
         self.rules_h = tkinter.Frame(self, height=1, bd=0, highlightthickness=0)  # plain hairline
         self.rules_h.grid(row=5, column=0, sticky="ew", padx=pad, pady=(20, 0))
@@ -351,6 +364,7 @@ class App(ctk.CTk):
         self.agenda_msg.grid(row=0, column=0, sticky="w")
         self.agenda_teach = self._link(ahint, "Show it to UmaBot", self._teach_agenda)
         self.agenda_teach.grid(row=1, column=0, sticky="w")
+
 
     def _build_activity(self, master):
         box = ctk.CTkFrame(master, fg_color="transparent")
@@ -417,6 +431,36 @@ class App(ctk.CTk):
             self.agenda_msg.configure(text="UmaBot doesn't know this agenda yet. Open My Agendas in the game so it "
                                            "shows on screen, then:", text_color=GOLD)
             self.agenda_teach.grid()
+
+    def _veterans_changed(self):
+        text = self.vet_entry.get().strip()
+        free = int(text) if text.isdigit() else -1
+        config.save_settings(self.base, {"training": {"veterans_free": free}})
+        self.cfg = config.load(self.cfg_path)
+        if self.bot:
+            self.bot.cfg["training"]["veterans_free"] = free
+            self.bot.notices = [n for n in self.bot.notices if "veterans" not in n]
+        self._refresh_veterans()
+
+    def _refresh_veterans(self):
+        free = (self.bot.cfg if self.bot else self.cfg)["training"].get("veterans_free", -1)
+        if not isinstance(free, int) or free < 0:
+            self.vet_msg.configure(text="Optional. Count it in the game and UmaBot counts down with every run.",
+                                   text_color=INK_SOFT)
+            return
+        try:
+            editing = str(self.focus_get()).startswith(str(self.vet_entry))
+        except (KeyError, tkinter.TclError):
+            editing = False
+        if not editing and self.vet_entry.get().strip() != str(free):
+            self.vet_entry.delete(0, "end")
+            self.vet_entry.insert(0, str(free))
+        if free == 0:
+            self.vet_msg.configure(text="Full: make room in the game, then update this number.", text_color=RED)
+        elif free <= 5:
+            self.vet_msg.configure(text=f"Only {free} left: make room soon.", text_color=GOLD)
+        else:
+            self.vet_msg.configure(text="Warns when 5 are left and stops starting runs at 0.", text_color=INK_SOFT)
 
     def _teach_agenda(self):
         name = self.agenda_entry.get().strip()
@@ -569,8 +613,8 @@ class App(ctk.CTk):
     # ------------------------------------------------------------ status
     def _refresh_status(self):
         tpls = load_templates(self.base)
-        rules = [r for r in prepare_rules(self.cfg["rule"], lambda n: n in tpls, self.cfg["card"]["templates"],
-                                          *rule_options(self.cfg)) if not r.unused]
+        rules = counted(prepare_rules(self.cfg["rule"], lambda n: n in tpls, self.cfg["card"]["templates"],
+                                      *rule_options(self.cfg)))
         ready, total = sum(r.enabled for r in rules), len(rules)
         if self.bot and self.bot.notices:
             self.setup_line.configure(text=self.bot.notices[-1], text_color=GOLD)
@@ -797,6 +841,7 @@ class App(ctk.CTk):
         self._ticks = getattr(self, "_ticks", 0) + 1
         if self.thread or self._ticks % 5 == 0:
             self._refresh_status()
+            self._refresh_veterans()
         if not self.thread and self._ticks % 150 == 0:  # ~ once a minute: move "now"
             self._draw_track()
         self.after(400, self._poll)

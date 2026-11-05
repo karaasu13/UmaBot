@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 import cv2
 
+from . import config
 from .human import Mouse, between
 from .logger import log, notify
 from .schedule import Schedule
@@ -31,9 +32,15 @@ class Rule:
     once_per_run: bool = False   # fires at most once between two runs
     only_if: str | None = None   # only used when this option is on (see rule_options)
     notify: str | None = None    # message shown in the app (and Discord) when it fires
+    optional: bool = False       # rare screen: not counted as missing while its picture isn't there
     enabled: bool = True
     unused: bool = False         # switched off by an option, not missing anything
     missing: list = field(default_factory=list)
+
+
+def counted(rules):
+    """Rules that count for "screens ready": in use, and not an optional one that isn't set up."""
+    return [r for r in rules if not r.unused and not (r.optional and not r.enabled)]
 
 
 class _Keep(dict):
@@ -134,7 +141,7 @@ class Bot:
         return path
 
     def summary(self):
-        used = [r for r in self.rules if not r.unused]
+        used = counted(self.rules)
         ready = [r for r in used if r.enabled]
         log.info(f"screens ready: {len(ready)}/{len(used)}")
         off = [r.name for r in used if not r.enabled]
@@ -200,7 +207,14 @@ class Bot:
             self.set_status("Black screen (PC locked?)", "wait")
             return 30
 
-        r, target = self.evaluate(frame, block_run_start=(state != "active"))
+        full = self.veterans_free() == 0
+        if full:
+            self.set_status("Veterans list full", "error")
+            msg = "The veterans list is full. Make room in the game, update the free spaces in UmaBot, then press Start."
+            if msg not in self.notices:
+                self.notices.append(msg)
+                notify(self.webhook(), msg)
+        r, target = self.evaluate(frame, block_run_start=(state != "active" or full))
         if r is None:
             self.last, self.repeats = None, 0
             if not self.vision.calibrated and self.vision.maybe_calibrate(frame):
@@ -272,6 +286,7 @@ class Bot:
             self.run_times.append(self.now())
             self.tp_tries = []
             self.done_this_run = set()
+            self._use_veteran_slot()
             log.info(f"run #{self.runs_today} of the day started")
         if r.checks_tp and self._looks_out_of_tp():
             r = Rule(name=r.name, if_seen=r.if_seen, action="wait_tp")
@@ -287,6 +302,24 @@ class Bot:
             return mins * 60
         self.mouse.maybe_distract(log.info)
         return between(self.rng, self.cfg["human"]["poll_s"])
+
+    def veterans_free(self):
+        v = self.cfg["training"].get("veterans_free", -1)
+        return v if isinstance(v, int) and v >= 0 else None
+
+    def _use_veteran_slot(self):
+        free = self.veterans_free()
+        if free is None:
+            return
+        free = max(0, free - 1)
+        self.cfg["training"]["veterans_free"] = free
+        config.save_settings(self.cfg["_base"], {"training": {"veterans_free": free}})
+        if free <= 5:
+            msg = (f"Only {free} space{'s' if free != 1 else ''} left in the veterans list. "
+                   "Make room before it fills up." if free else
+                   "This run fills the veterans list. Make room before the next one.")
+            self.notices.append(msg)
+            notify(self.webhook(), msg)
 
     def _click_match(self, m, what):
         self.mouse.react()
