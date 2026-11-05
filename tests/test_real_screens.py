@@ -215,3 +215,31 @@ def test_old_calibration_files_are_measured_again(base):
     with open(os.path.join(base, "calibration.json"), "w") as f:
         json.dump({"_v": 2, "1106x622": 0.576}, f)
     assert Vision(config.load(base=base))._calibration == {"1106x622": 0.576}
+
+
+@pytest.mark.parametrize("agenda,box,load_y", [
+    ("sapporo", (158, 208, 175, 50), 261),     # races only, first in the list
+    ("farmoguri", (155, 298, 172, 92), 368),   # name and races
+    ("seiunsolv", (155, 405, 330, 95), 475),   # a box that also covers the buttons
+])
+def test_taught_agenda_loads_its_own_list(base, agenda, box, load_y):
+    cfg = config.load(base=base)
+    img = cv2.imread(os.path.join(SCREENS, "s13_my_agendas.png"))
+    vision = Vision(cfg, source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
+    vision.fixed_scale = SCALE
+    frame = vision.capture()
+    assert tools.check_agenda(cfg, frame, box) is None
+    tools.save_agenda(cfg, agenda, frame, box)
+    bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda=agenda)
+    bot.load_agenda()
+    assert len(mouse.clicks) == 1 and abs(mouse.clicks[0][1] - load_y) < 8
+
+
+def test_crop_check_refuses_bad_boxes(base):
+    cfg = config.load(base=base)
+    img = cv2.imread(os.path.join(SCREENS, "s13_my_agendas.png"))
+    vision = Vision(cfg, source=lambda: (img, (0, 0, img.shape[1], img.shape[0])))
+    vision.fixed_scale = SCALE
+    frame = vision.capture()
+    assert "bigger" in tools.check_agenda(cfg, frame, (160, 300, 300, 12))   # just a thin strip of the name
+    assert tools.check_agenda(cfg, frame, (700, 100, 200, 100))              # not an agenda at all

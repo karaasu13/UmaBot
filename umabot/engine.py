@@ -52,6 +52,23 @@ def agenda_slug(name):
     return re.sub(r"[^a-z0-9]+", "_", (name or "").strip().lower()).strip("_")
 
 
+def agenda_button(vision, frame, name):
+    """(agenda match, its Load List match). Load List is the first one at or below the top of the agenda's box,
+    from its left edge to a bit past its right edge, so it's found whether or not the box covers the buttons.
+    (Save Here is above Load List and is never pressed.)"""
+    tpl = vision.templates.get(name)
+    if tpl is None:
+        return None, None
+    # full resolution and colour: agendas often start with the same races, only the name and numbers differ
+    m = vision.find_in(frame, name, 0, 0, frame.img.shape[1], frame.img.shape[0])
+    if not m:
+        return None, None
+    cx, cy = (m.x - frame.rect[0]) / frame.k, (m.y - frame.rect[1]) / frame.k
+    w, h = tpl.shape[1], tpl.shape[0]
+    left, top = cx - w / 2, cy - h / 2
+    return m, vision.find_top_in(frame, "load_list", left - 10, top - 15, cx + w / 2 + 320, top + 205)
+
+
 def rule_options(cfg):
     """Values the rules can refer to: {focus} in template names, and only_if switches."""
     t = cfg["training"]
@@ -358,23 +375,18 @@ class Bot:
         Load List. Without the agenda no run starts: a run without it farms far fewer fans."""
         agenda = self.cfg["training"].get("agenda")
         name = f"agenda_{agenda_slug(agenda)}"
-        tpl = self.vision.templates.get(name)
         direction, turned, scrolls = -1, False, 0
-        while tpl is not None and scrolls < 40:
+        while name in self.vision.templates and scrolls < 40:
             if self.should_stop():
                 return None
             frame = self.vision.capture()
             if frame is None:
                 return 2
-            m = frame.find(name)
+            m, lm = agenda_button(self.vision, frame, name)
             step = direction * 10
+            if lm:
+                return self._click_match(lm, f"loading the agenda '{agenda}'")
             if m:
-                # Load List sits just right of the agenda's box (Save Here is above it: never pressed)
-                x0 = (m.x - frame.rect[0]) / frame.k + tpl.shape[1] / 2
-                y0 = (m.y - frame.rect[1]) / frame.k - tpl.shape[0] / 2
-                lm = self.vision.find_in(frame, "load_list", x0 - 10, y0 - 10, x0 + 260, y0 + tpl.shape[0] + 60)
-                if lm:
-                    return self._click_match(lm, f"loading the agenda '{agenda}'")
                 step = direction * 3  # the box is in view but its button isn't yet: nudge
             if scrolls == 0:
                 log.info(f"looking for the agenda '{agenda}' in My Agendas")
@@ -389,7 +401,7 @@ class Bot:
                     break
                 direction, turned = -direction, True  # end of the list: look the other way
         msg = (f"Couldn't find the agenda '{agenda}' in My Agendas, so no run was started. Check the name, "
-               "or open My Agendas and press 'Show it to UmaBot' again.")
+               "or open My Agendas in the game and press 'Show it again' in UmaBot.")
         self.set_status("Stopped: agenda not found", "error")
         self.notices.append(msg)
         notify(self.webhook(), msg)

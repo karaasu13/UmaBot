@@ -69,7 +69,8 @@ HELP = """
 - Trains: your trainee, and another one in case the first isn't available.
 - Focus: Balanced, Stamina or Sprint (Sprint by default).
 - Agenda: the exact name of your saved agenda. If UmaBot doesn't know it yet, open My Agendas in the game
-  and press "Show it to UmaBot", then drag a box around the agenda (name and races, not the buttons).
+  and press "Show it to UmaBot", then drag a box around the agenda (its name and race pictures) and Save.
+  UmaBot checks the box right away. To redo it later, press "Show it again".
 - Free veteran spaces: count them in the game. UmaBot counts down every run, warns at 5 and stops at 0.
 - Plays from / to: the hours it may start runs. They shift a little every day and there are a few breaks.
 
@@ -483,9 +484,11 @@ class App(ctk.CTk):
             self.agenda_teach.grid_remove()
         elif known:
             self.agenda_msg.configure(text="Loaded from My Agendas before every run.", text_color=TURF)
-            self.agenda_teach.grid_remove()
+            self.agenda_teach.configure(text="Show it again")
+            self.agenda_teach.grid()
         else:
             self.agenda_msg.configure(text="New agenda: open My Agendas in the game, then", text_color=GOLD)
+            self.agenda_teach.configure(text="Show it to UmaBot")
             self.agenda_teach.grid()
 
     def _veterans_changed(self):
@@ -1082,13 +1085,13 @@ class AgendaCrop(ctk.CTkToplevel):
         if x1 - x0 < 8 or y1 - y0 < 8:
             self.box = None
             self.save_btn.configure(state="disabled")
-            self.hint.configure(text="That box is too small: drag around the whole agenda.")
+            self.hint.configure(text="That box is too small: drag around the whole agenda.", text_color=RED)
             return
         h, w = self.frame.raw.shape[:2]
         rx, ry = round(x0 / self.k), round(y0 / self.k)
         self.box = (rx, ry, min(w - rx, round((x1 - x0) / self.k)), min(h - ry, round((y1 - y0) / self.k)))
         self.save_btn.configure(state="normal")
-        self.hint.configure(text="Looks good? Save. Or drag again.")
+        self.hint.configure(text="Looks good? Save. Or drag again.", text_color=INK_SOFT)
 
     def _finish(self, box):
         if self.finished:
@@ -1102,8 +1105,17 @@ class AgendaCrop(ctk.CTkToplevel):
         self.done(self.name, self.frame, box)
 
     def save(self):
-        if self.box:
-            self._finish(self.box)
+        if not self.box:
+            return
+        try:
+            problem = tools.check_agenda(config.load(self.app.cfg_path), self.frame, self.box)
+        except Exception:
+            log.info("couldn't check the agenda box:\n" + traceback.format_exc())
+            problem = None
+        if problem:
+            self.hint.configure(text=problem, text_color=RED)
+            return
+        self._finish(self.box)
 
     def cancel(self):
         self._finish(None)

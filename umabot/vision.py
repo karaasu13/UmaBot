@@ -327,6 +327,31 @@ class Vision:
         m.score = val
         return m
 
+    def find_top_in(self, frame, name, x0, y0, x1, y1):
+        """The highest match of `name` inside a rectangle (reference coordinates), not the best-scoring one:
+        with a list of identical buttons, the first one under a point is the one that belongs to it."""
+        tpl = self.templates.get(name)
+        if tpl is None:
+            return None
+        H, W = frame.img.shape[:2]
+        x0, y0, x1, y1 = (max(0, round(x0)), max(0, round(y0)), min(W, round(x1)), min(H, round(y1)))
+        roi = frame.img[y0:y1, x0:x1]
+        h, w = tpl.shape[:2]
+        if h > roi.shape[0] or w > roi.shape[1]:
+            return None
+        res = cv2.matchTemplate(roi, tpl, cv2.TM_CCOEFF_NORMED)
+        res[~np.isfinite(res)] = 0
+        ys, xs = np.nonzero(res >= self.thresholds.get(name, self.threshold))
+        if len(ys) == 0:
+            return None
+        top = ys.min()
+        near = ys <= top + h / 2  # that row of matches: take its best one
+        i = np.argmax(res[ys[near], xs[near]])
+        ly, lx = ys[near][i], xs[near][i]
+        m = frame.to_screen(x0 + lx + w / 2, y0 + ly + h / 2, w, h)
+        m.score = float(res[ly, lx])
+        return m
+
     def score(self, frame, name):
         return self.measure(frame, name)[0] if name in self.templates else None
 

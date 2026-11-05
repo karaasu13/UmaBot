@@ -278,13 +278,18 @@ def test(cfg):
 
 
 # ---------------------------------------------------------------- advanced
-def save_crop(raw, box, scale, dest):
-    """Saves raw[box] converted to the reference scale, so it works at any window size."""
+def crop_piece(raw, box, scale):
+    """raw[box] converted to the reference scale, so it works at any window size."""
     x, y, w, h = box
     piece = raw[y:y + h, x:x + w]
     if abs(scale - 1) > 0.005:
         size = (max(1, round(w / scale)), max(1, round(h / scale)))
         piece = cv2.resize(piece, size, interpolation=cv2.INTER_AREA if scale > 1 else cv2.INTER_CUBIC)
+    return piece
+
+
+def save_crop(raw, box, scale, dest):
+    piece = crop_piece(raw, box, scale)
     _write_png(piece, dest)
     return piece.shape[1], piece.shape[0]
 
@@ -330,6 +335,26 @@ def game_shot(cfg, hide=lambda: None, settle=0.6):
         sys.exit("The game looks minimised. Open My Agendas in the game and try again.")
     f, _ = ensure_scale(v, f)
     return f
+
+
+def check_agenda(cfg, frame, box):
+    """Before saving: would the bot find this box on this screenshot, and the agenda's Load List with it?
+    Returns None if all is well, else what to tell the user."""
+    from .engine import agenda_button
+    piece = crop_piece(frame.raw, box, frame.k)
+    if min(piece.shape[:2]) < 40:
+        return "Make the box bigger: the agenda's name and its race pictures."
+    v = Vision(cfg, source=lambda: (frame.raw, frame.rect))
+    v.fixed_scale = frame.k
+    v.templates["agenda__check"] = piece
+    f = v.capture()
+    m, lm = agenda_button(v, f, "agenda__check")
+    if not m:
+        return "UmaBot can't recognise that box. Drag around the agenda's name and its race pictures."
+    if not lm:
+        return ("UmaBot can't see that agenda's Load List button. Scroll the list in the game so the whole "
+                "agenda shows, then try again.")
+    return None
 
 
 def save_agenda(cfg, name, frame, box):
