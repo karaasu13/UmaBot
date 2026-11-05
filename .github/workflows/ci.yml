@@ -44,7 +44,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force package/templates | Out-Null
           Copy-Item dist/UmaBot.exe, config.toml package/
-          Get-ChildItem templates -Filter *.png -ErrorAction SilentlyContinue | Copy-Item -Destination package/templates/
+          Copy-Item templates/* package/templates/ -Recurse -Exclude README.md
       - uses: actions/upload-artifact@v4
         with:
           name: UmaBot-windows

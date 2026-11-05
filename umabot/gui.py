@@ -106,8 +106,9 @@ class App(ctk.CTk):
         self._load_fonts()
 
         self.title("UmaBot")
-        self.geometry("980x760")
-        self.minsize(900, 700)
+        h = min(760, int(self.winfo_screenheight() / ctk.ScalingTracker.get_window_scaling(self)) - 90)
+        self.geometry(f"980x{max(560, h)}")
+        self.minsize(900, 560)
         self._set_icon()
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -131,12 +132,17 @@ class App(ctk.CTk):
     # ------------------------------------------------------------ type
     def _load_fonts(self):
         folder = resource(os.path.join("assets", "fonts"))
+        loaded = 0
         if os.path.isdir(folder):
             for f in os.listdir(folder):
                 if f.lower().endswith(".ttf"):
-                    ctk.FontManager.load_font(os.path.join(folder, f))
+                    path = os.path.join(folder, f)
+                    if sys.platform == "win32":  # enumerable, so Tk can see it by name
+                        loaded += ctk.FontManager.windows_load_font(path, private=True, enumerable=True)
+                    else:
+                        loaded += ctk.FontManager.load_font(path)
         families = set(self.tk.call("font", "families"))
-        if "Barlow Condensed SemiBold" in families or "Barlow Condensed" in families:
+        if families & {"Barlow Condensed SemiBold", "Barlow Condensed"} or (sys.platform == "win32" and loaded >= 5):
             self.f_body, self.f_medium, self.f_strong = "Barlow", "Barlow Medium", "Barlow SemiBold"
             self.f_display, self.f_display_medium = "Barlow Condensed SemiBold", "Barlow Condensed Medium"
         else:  # fonts couldn't be loaded: system fallback
@@ -293,18 +299,34 @@ class App(ctk.CTk):
                                selected_color=TURF, selected_hover_color=TURF, unselected_color=PAPER,
                                unselected_hover_color=LINE, fg_color=LINE, text_color=INK,
                                corner_radius=8, height=32).grid(row=0, column=6, sticky="e")
-        vet = ctk.CTkFrame(car, fg_color="transparent")
-        vet.grid(row=1, column=0, columnspan=7, sticky="w", pady=(10, 0))
-        self._label(vet, "Free spaces in the veterans list", self.f_body, 14).grid(row=0, column=0, padx=(0, 10))
-        self.vet_entry = self._entry(vet, width=64, height=32, justify="center", placeholder_text="–")
+        row2 = ctk.CTkFrame(car, fg_color="transparent")
+        row2.grid(row=1, column=0, columnspan=7, sticky="ew", pady=(10, 0))
+        row2.grid_columnconfigure(3, weight=1)
+        self._label(row2, "Agenda", self.f_body, 14).grid(row=0, column=0, padx=(0, 8))
+        self.agenda_entry = self._entry(row2, placeholder_text="Name of your farming agenda", width=230, height=32)
+        self.agenda_entry.grid(row=0, column=1)
+        if self.cfg["training"].get("agenda"):
+            self.agenda_entry.insert(0, self.cfg["training"]["agenda"])
+        self.agenda_entry.bind("<FocusOut>", lambda e: self._agenda_changed(), add="+")
+        self.agenda_entry.bind("<Return>", lambda e: self._agenda_changed())
+        ahint = ctk.CTkFrame(row2, fg_color="transparent")
+        ahint.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.agenda_msg = self._label(ahint, "", self.f_body, 13, INK_SOFT, justify="left")
+        self.agenda_msg.grid(row=0, column=0, sticky="w")
+        self.agenda_teach = self._link(ahint, "Show it to UmaBot", self._teach_agenda)
+        self.agenda_teach.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        vet = ctk.CTkFrame(row2, fg_color="transparent")
+        vet.grid(row=0, column=4, sticky="e")
+        self._label(vet, "Free veteran spaces", self.f_body, 14).grid(row=0, column=0, padx=(0, 8))
+        self.vet_entry = self._entry(vet, width=56, height=32, justify="center", placeholder_text="–")
         self.vet_entry.grid(row=0, column=1)
         free = self.cfg["training"].get("veterans_free", -1)
         if isinstance(free, int) and free >= 0:
             self.vet_entry.insert(0, str(free))
         self.vet_entry.bind("<FocusOut>", lambda e: self._veterans_changed(), add="+")
         self.vet_entry.bind("<Return>", lambda e: self._veterans_changed())
-        self.vet_msg = self._label(vet, "", self.f_body, 13, INK_SOFT, anchor="w")
-        self.vet_msg.grid(row=0, column=2, sticky="w", padx=(12, 0))
+        self.vet_msg = self._label(car, "", self.f_body, 12, INK_SOFT, anchor="e")
+        self.vet_msg.grid(row=2, column=0, columnspan=7, sticky="e", pady=(2, 0))
 
         self.rules_h = tkinter.Frame(self, height=1, bd=0, highlightthickness=0)  # plain hairline
         self.rules_h.grid(row=5, column=0, sticky="ew", padx=pad, pady=(20, 0))
@@ -351,19 +373,6 @@ class App(ctk.CTk):
         self.card_site = self._link(hint, "GameTora", lambda: webbrowser.open(GAMETORA_SUPPORTS))
         self.card_site.grid(row=0, column=1, sticky="w", padx=(4, 0))
 
-        self._label(box, "Agenda", self.f_display, 18).grid(row=5, column=0, columnspan=2, sticky="w", pady=(18, 0))
-        self.agenda_entry = self._entry(box, placeholder_text="Name of a saved agenda (optional)", height=34)
-        self.agenda_entry.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        if self.cfg["training"].get("agenda"):
-            self.agenda_entry.insert(0, self.cfg["training"]["agenda"])
-        self.agenda_entry.bind("<FocusOut>", lambda e: self._agenda_changed(), add="+")
-        self.agenda_entry.bind("<Return>", lambda e: self._agenda_changed())
-        ahint = ctk.CTkFrame(box, fg_color="transparent")
-        ahint.grid(row=7, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.agenda_msg = self._label(ahint, "", self.f_body, 13, INK_SOFT, justify="left", wraplength=330)
-        self.agenda_msg.grid(row=0, column=0, sticky="w")
-        self.agenda_teach = self._link(ahint, "Show it to UmaBot", self._teach_agenda)
-        self.agenda_teach.grid(row=1, column=0, sticky="w")
 
 
     def _build_activity(self, master):
@@ -422,14 +431,14 @@ class App(ctk.CTk):
         name = self.cfg["training"].get("agenda", "")
         known = f"agenda_{agenda_slug(name)}" in load_templates(self.base)
         if not name:
-            self.agenda_msg.configure(text="Empty: uses the agenda already set in the game.", text_color=INK_SOFT)
+            self.agenda_msg.configure(text="Set your farming agenda: without one the runs farm far fewer fans.",
+                                      text_color=GOLD)
             self.agenda_teach.grid_remove()
         elif known:
-            self.agenda_msg.configure(text="Loaded from My Agendas before every run.", text_color=INK_SOFT)
+            self.agenda_msg.configure(text="Loaded from My Agendas before every run.", text_color=TURF)
             self.agenda_teach.grid_remove()
         else:
-            self.agenda_msg.configure(text="UmaBot doesn't know this agenda yet. Open My Agendas in the game so it "
-                                           "shows on screen, then:", text_color=GOLD)
+            self.agenda_msg.configure(text="New agenda: open My Agendas in the game, then", text_color=GOLD)
             self.agenda_teach.grid()
 
     def _veterans_changed(self):
