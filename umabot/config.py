@@ -52,9 +52,18 @@ DEFAULTS = {
     },
     "safety": {
         "max_repeats": 25,
-        "unknown_screen_min": 40,
+        "unknown_screen_min": 45,   # no known screen for this long (even if it moves): alert, then restart
+        "read_screen": True,        # read the words on unknown screens and press safe buttons
+        "read_after_s": 8,
+        "stuck_alert_min": 5,       # the same unknown screen, not moving, for this long: alert
+        "restart_game": True,       # close and reopen the game when really stuck (or open it if it's gone)
+        "restart_after_min": 20,
+        "reopen_after_min": 5,
+        "steam_app_id": 3224770,
         "discord_webhook": "",
         "discord_each_run": False,
+        "discord_bot_token": "",    # optional: a Discord bot of your own, to answer UmaBot from Discord
+        "discord_channel": "",
         "stop_on_user_input": True,
     },
     "rule": [],

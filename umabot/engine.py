@@ -1,4 +1,5 @@
 """Rule engine: every cycle it looks at the screen, picks the first rule that matches and runs it."""
+import json
 import os
 import random
 import re
@@ -13,7 +14,10 @@ import numpy as np
 
 from . import config
 from .human import Mouse, between
+from .game import STEAM_APP_ID, Game
 from .logger import log, notify, send_discord
+from .reader import Reader
+from .recovery import Recovery
 from .schedule import Schedule
 from .vision import Vision
 
@@ -171,7 +175,7 @@ def prepare_rules(rules, has, card_templates, subs=None, flags=None):
 
 class Bot:
     def __init__(self, cfg, vision=None, mouse=None, now=datetime.now, sleep=time.sleep, rng=None,
-                 should_stop=lambda: False):
+                 should_stop=lambda: False, reader=None, game=None, remote=None):
         self.cfg = cfg
         self.rng = rng or random.Random()
         self.vision = vision or Vision(cfg)
@@ -188,7 +192,11 @@ class Bot:
         self.tp_tries = []   # recent presses of a checks_tp button that didn't start a run
         self.done_this_run = set()  # once_per_run rules already used
         self.notices = []    # messages for the app
-        self.unknown_since, self.saved_unknown = None, False
+        self.blocked = {}    # rule name -> until when it's skipped (its button stopped working)
+        self.recovery = Recovery(self, reader if reader is not None else Reader(),
+                                 game or Game(self.vision, cfg["safety"].get("steam_app_id", STEAM_APP_ID)))
+        self.remote = remote  # Discord commands (optional)
+        self.rules += self._learned_rules()
         self.card_pause_until, self.card_failures = None, 0
         self.prev_state, self.no_window = None, False
         self.status, self.status_kind = "Starting", "ok"  # kind: ok | wait | stop | error
@@ -228,6 +236,8 @@ class Bot:
         for r in self.rules:
             if not r.enabled or (block_run_start and r.starts_run):
                 continue
+            if r.name in self.blocked and now < self.blocked[r.name]:
+                continue
             if r.action == "card" and self.card_pause_until and now < self.card_pause_until:
                 continue
             if r.once_per_run and r.name in self.done_this_run:
@@ -254,6 +264,18 @@ class Bot:
             self.day, self.runs_today = now.date(), 0
             self.run_times = []
 
+        if self.remote is not None:
+            r = self.remote.handle(self, now)
+            if r == "stop":
+                self.set_status("Stopped from Discord", "stop")
+                return None
+            if self.remote.paused:
+                self.set_status("Paused from Discord", "wait")
+                return 30
+            if r is not None:
+                self.set_status("Playing")
+                return r
+
         state, until = self.schedule.state(now)
         if state != self.prev_state:
             text = {"active": "Playing", "break": "On a break", "off": "Off hours"}[state]
@@ -274,8 +296,9 @@ class Bot:
                 log.info("game window not found (is it open? minimised?)")
                 self.no_window = True
             self.set_status("Waiting for the game window", "wait")
-            return 15
+            return self.recovery.no_window(now, state == "active") or 15
         self.no_window = False
+        self.recovery.window_back()
         if frame.is_black():
             log.info("black screen: is the PC locked or the game minimised?")
             self.set_status("Black screen (PC locked?)", "wait")
@@ -293,31 +316,80 @@ class Bot:
             self.last, self.repeats = None, 0
             if not self.vision.calibrated and self.vision.maybe_calibrate(frame):
                 return 0.2  # UI scale just measured: look again right away
-            self._unknown_screen(frame, now)
+            wait = self.recovery.unknown(frame, now, expect_idle=(state != "active" or full))
+            if wait is not None:
+                return wait
             if state == "off":
                 return between(self.rng, (60, 120))
             return between(self.rng, self.cfg["human"]["poll_s"])
-        self.unknown_since, self.saved_unknown = None, False
+        self.recovery.known_screen()
 
         key = (r.name, target)
         self.repeats = self.repeats + 1 if key == self.last else 1
         self.last = key
         if r.action != "card" and self.repeats > self.cfg["safety"]["max_repeats"]:
-            path = self.save_screenshot(frame, "stuck")
-            self.set_status("Stopped: stuck on the same screen", "error")
-            notify(self.webhook(), f"'{r.name}' repeated {self.repeats - 1}x without the screen changing. Stopped. ({path})")
-            return None
+            # its button doesn't do anything anymore (an event changed the screen?): set that rule aside for
+            # a while and let the screen reading (and, if needed, a restart) get past it
+            self.save_screenshot(frame, "stuck")
+            self.blocked[r.name] = now + timedelta(minutes=10)
+            log.info(f"'{r.name}' repeated {self.repeats - 1}x without the screen changing: "
+                     "trying something else for 10 min")
+            self.last, self.repeats = None, 0
+            return 1.0
         return self.execute(r, target, frame)
 
-    def _unknown_screen(self, frame, now):
-        if self.unknown_since is None:
-            self.unknown_since = now
-            return
-        mins = (now - self.unknown_since).total_seconds() / 60
-        if not self.saved_unknown and mins >= self.cfg["safety"]["unknown_screen_min"]:
-            path = self.save_screenshot(frame, "unknown")
-            log.info(f"no known screen for {mins:.0f} min, screenshot saved to {path}")
-            self.saved_unknown = True
+    # ------------------------------------------------------------ screens taught from Discord
+    def _learned_path(self):
+        return os.path.join(self.cfg["_base"], "learned.json")
+
+    def _learned_rules(self):
+        try:
+            with open(self._learned_path(), encoding="utf-8") as f:
+                items = json.load(f)
+        except (OSError, ValueError):
+            return []
+        rules = [{"name": f"Learned: {it['label']}", "if_seen": [it["template"]], "click": it["template"]}
+                 for it in items if isinstance(it, dict) and it.get("template")]
+        return prepare_rules(rules, self.vision.has, self.cfg["card"]["templates"], *rule_options(self.cfg))
+
+    def learn(self, frame, x, y, label, words=()):
+        """Remembers a press made from Discord: the area around (x, y) (real px from the window's corner) becomes
+        a picture that gets pressed the next time it's seen. Never for anything about spending or quitting."""
+        from .reader import DANGER_BUTTONS, DANGER_IN_TEXT
+        rx, ry = x / frame.k, y / frame.k
+        H, W = frame.img.shape[:2]
+        x0, y0 = int(max(0, rx - 130)), int(max(0, ry - 50))
+        x1, y1 = int(min(W, rx + 130)), int(min(H, ry + 50))
+        near = [w for w in words if abs(w.center[0] - x) < 200 and abs(w.center[1] - y) < 80]
+        if any(DANGER_BUTTONS.match(w.key) or any(d in w.key for d in DANGER_IN_TEXT) for w in near) or \
+                DANGER_BUTTONS.match(label.lower()) or x1 - x0 < 40 or y1 - y0 < 30:
+            return False
+        try:
+            with open(self._learned_path(), encoding="utf-8") as f:
+                items = json.load(f)
+        except (OSError, ValueError):
+            items = []
+        name = f"learned_{len(items) + 1}"
+        crop = frame.img[y0:y1, x0:x1].copy()
+        ok, buf = cv2.imencode(".png", crop)
+        if not ok:
+            return False
+        os.makedirs(os.path.join(self.cfg["_base"], "templates"), exist_ok=True)
+        buf.tofile(os.path.join(self.cfg["_base"], "templates", f"{name}.png"))
+        items.append({"template": name, "label": label})
+        with open(self._learned_path(), "w", encoding="utf-8") as f:
+            json.dump(items, f, indent=2)
+        self.vision.templates[name] = crop
+        rule = {"name": f"Learned: {label}", "if_seen": [name], "click": name}
+        self.rules += prepare_rules([rule], self.vision.has, self.cfg["card"]["templates"], *rule_options(self.cfg))
+        log.info(f"learned from Discord: '{label}'")
+        return True
+
+    def ask_for_help(self, frame, now):
+        """Stuck: with the Discord bot set up, asks there what to press. Seconds to wait, or None."""
+        if self.remote is None:
+            return None
+        return self.remote.ask(self, frame, now)
 
     # ------------------------------------------------------------ actions
     def execute(self, r, target, frame):

@@ -24,6 +24,7 @@ from PIL import Image, ImageTk
 from . import __version__, config, tools
 from .engine import Bot, counted, prepare_rules, rule_options
 from .logger import send_discord, log, setup as setup_logging
+from .remote import HELP as REMOTE_HELP, Discord, Remote, channel_id
 from .schedule import Schedule
 from .vision import load_templates
 from .watch import InputWatch
@@ -77,6 +78,16 @@ HELP = """
 # Discord alerts
 - Press "Discord alerts" at the top: paste a webhook of one of your channels (channel settings > Integrations
   > Webhooks > New Webhook > Copy Webhook URL), send a test and Save. UmaBot writes there when it stops or needs you.
+- Optional, "Answer UmaBot from Discord": with a Discord bot of your own (free, steps in that window), UmaBot posts
+  the screen with its words numbered when it's really stuck. Answer 3 (press word 3), C4 (a grid cell), restart,
+  wait, print, status, pause, start or stop. What you press is remembered for next time.
+
+# Screens UmaBot doesn't know (events, pop-ups, missions...)
+- It reads the words on screen and presses a safe button: Close, OK, Next, Skip, Collect All...
+  On anything about carats, restoring TP, buying or quitting it only ever presses No / Cancel / Close.
+- Each new screen it had to read is kept in logs/unknown: send them over and they get added properly.
+- Really stuck: a Discord message with the screenshot, then it closes and reopens the game (a career in
+  progress can be resumed). If the game closes, it opens it again through Steam.
 
 # Starting and stopping
 - Press "Check the game screen" first: Activity shows what UmaBot sees and what it would press.
@@ -597,6 +608,45 @@ class App(ctk.CTk):
                         font=self.font(self.f_body, 13), text_color=INK, fg_color=SOLID, hover_color=SOLID,
                         checkmark_color=ON_SOLID, border_color=LINE, border_width=2, checkbox_width=18,
                         checkbox_height=18, corner_radius=4).pack(anchor="w", padx=28, pady=(12, 0))
+
+        # optional: a Discord bot of your own, to answer UmaBot when it's stuck
+        remote_box = ctk.CTkFrame(win, fg_color="transparent")
+        toggle = self._link(win, "Answer UmaBot from Discord too (optional)", lambda: show_remote(), size=13)
+        toggle.pack(anchor="w", padx=28, pady=(16, 0))
+        self._label(remote_box, "When it's really stuck, UmaBot posts the screen with its words numbered. Answer "
+                    "with a number (3), a cell (C4), restart or wait, and it remembers what you pressed.",
+                    self.f_body, 13, INK_SOFT, justify="left", wraplength=520, anchor="w").pack(anchor="w")
+        rsteps = ("1. discord.com/developers/applications > New Application > Bot.\n"
+                  "2. Reset Token and copy it. Turn on Message Content Intent.\n"
+                  "3. OAuth2 > URL Generator: tick bot, then View Channels, Send Messages,\n"
+                  "    Attach Files and Read Message History. Open the link, add it to your server.\n"
+                  "4. Right click your channel > Copy Link.")
+        self._label(remote_box, rsteps, self.f_body, 13, INK, justify="left", anchor="w").pack(anchor="w", pady=(8, 8))
+        token_entry = self._entry(remote_box, placeholder_text="Bot token", width=520, height=34, show="•")
+        token_entry.pack(anchor="w")
+        chan_entry = self._entry(remote_box, placeholder_text="https://discord.com/channels/...", width=520, height=34)
+        chan_entry.pack(anchor="w", pady=(8, 0))
+        if self.cfg["safety"].get("discord_bot_token"):
+            token_entry.insert(0, self.cfg["safety"]["discord_bot_token"])
+        if self.cfg["safety"].get("discord_channel"):
+            chan_entry.insert(0, self.cfg["safety"]["discord_channel"])
+
+        def show_remote():
+            if not remote_box.winfo_ismapped():
+                remote_box.pack(after=toggle, anchor="w", padx=28, pady=(8, 0))
+                toggle.configure(text="Answer UmaBot from Discord")
+
+        def remote_values():
+            token, link = token_entry.get().strip(), chan_entry.get().strip()
+            if not token and not link:
+                return "", ""
+            cid = channel_id(link)
+            if not token or not cid:
+                msg.configure(text="For answering from Discord, paste both the bot token and the channel link.",
+                              text_color=RED)
+                return None
+            return token, cid
+
         msg = self._label(win, "", self.f_medium, 13, INK_SOFT, justify="left", wraplength=520, anchor="w")
         msg.pack(anchor="w", padx=28, pady=(10, 0))
         bar = ctk.CTkFrame(win, fg_color="transparent")
@@ -612,27 +662,41 @@ class App(ctk.CTk):
             return u
 
         def save():
-            u = url()
-            if u is None:
+            u, rv = url(), remote_values()
+            if u is None or rv is None:
                 return
-            config.save_settings(self.base, {"safety": {"discord_webhook": u, "discord_each_run": bool(each_run.get())}})
-            self.cfg["safety"]["discord_webhook"] = u
-            self.cfg["safety"]["discord_each_run"] = bool(each_run.get())
-            log.info("Discord alerts on" if u else "Discord alerts off")
+            values = {"discord_webhook": u, "discord_each_run": bool(each_run.get()),
+                      "discord_bot_token": rv[0], "discord_channel": rv[1]}
+            config.save_settings(self.base, {"safety": values})
+            self.cfg["safety"].update(values)
+            log.info("Discord alerts on" if (u or rv[0]) else "Discord alerts off")
+            if rv[0]:
+                log.info("Discord answers on: UmaBot reads your channel while it plays")
             self._refresh_discord()
             win.destroy()
 
         def test():
-            u = url()
-            if not u:
-                if u == "":
-                    msg.configure(text="Paste the webhook link first.", text_color=RED)
+            u, rv = url(), remote_values()
+            if u is None or rv is None:
+                return
+            if not u and not rv[0]:
+                msg.configure(text="Paste the webhook link first.", text_color=RED)
                 return
             msg.configure(text="Sending...", text_color=INK_SOFT)
             test_btn.configure(state="disabled")
 
             def work():
-                problem = send_discord(u, "UmaBot: test message. Alerts will show up here.")
+                problem = None
+                if u:
+                    problem = send_discord(u, "UmaBot: test message. Alerts will show up here.")
+                if not problem and rv[0]:
+                    d = Discord(*rv)
+                    problem = d.check()
+                    if not problem:
+                        try:
+                            d.post("UmaBot connected. When I'm stuck I'll post the screen here. " + REMOTE_HELP)
+                        except Exception as e:
+                            problem = f"the bot can't write in that channel ({e})."
                 def done():
                     if not win.winfo_exists():
                         return
@@ -651,10 +715,12 @@ class App(ctk.CTk):
                                  text_color=INK, font=self.font(self.f_strong, 14))
         test_btn.pack(side="right", padx=(0, 10))
         win.bind("<Escape>", lambda e: win.destroy())
+        if self.cfg["safety"].get("discord_bot_token"):
+            show_remote()
         win.after(80, lambda: (win.lift(), entry.focus_set()))
 
     def _refresh_discord(self):
-        on = bool(self.cfg["safety"].get("discord_webhook"))
+        on = bool(self.cfg["safety"].get("discord_webhook") or self.cfg["safety"].get("discord_bot_token"))
         self.discord_link.configure(text="Discord alerts: on" if on else "Discord alerts")
 
     # ------------------------------------------------------------ fitting small screens
@@ -1049,7 +1115,16 @@ class App(ctk.CTk):
         def work():
             bot = None
             try:
-                bot = self.bot = Bot(cfg, sleep=self.stop_event.wait, should_stop=self.stop_event.is_set)
+                remote = None
+                if cfg["safety"].get("discord_bot_token") and cfg["safety"].get("discord_channel"):
+                    remote = Remote(Discord(cfg["safety"]["discord_bot_token"], cfg["safety"]["discord_channel"]))
+                    if remote.start():
+                        self._remote = remote
+                        log.info("Discord answers on: if UmaBot gets stuck it asks in your channel")
+                    else:
+                        remote = None
+                bot = self.bot = Bot(cfg, sleep=self.stop_event.wait, should_stop=self.stop_event.is_set,
+                                     remote=remote)
                 watch = None
                 if self.watch_input.get():
                     def took_over():
@@ -1063,6 +1138,8 @@ class App(ctk.CTk):
                 finally:
                     if watch:
                         watch.stop()
+                    if remote:
+                        remote.close()
             except Exception as e:
                 if type(e).__name__ == "FailSafeException":
                     log.info("Stopped: the mouse went into the corner of the screen")
@@ -1150,6 +1227,15 @@ def selftest(cfg_path=None):
     app.update()
     app._draw_track()
     app._on_close()
+    # the screen reader must work inside the .exe too (models and libraries bundled)
+    import cv2
+    from .reader import Reader, decide
+    reader = Reader()
+    img = cv2.imread(resource(os.path.join("assets", "ocr_check.png")))
+    choice = decide(reader.read(img)) if img is not None and reader.available else None
+    if not choice or choice[0] != "No":
+        print("selftest: the screen reader doesn't work", choice)
+        return 3
     return 0
 
 

@@ -81,6 +81,11 @@ The schedule's nightly pause doesn't cost runs: TP keeps refilling (a full bar t
 - **Stop anytime** with the Stop button, or fling the mouse to the top-left corner of the screen.
 - **Leaves a trail:** screenshots of anything unusual go to the `logs` folder (button *Logs*). It can also ping you on
   Discord: press **Discord alerts** at the top of the app, paste a channel webhook and send a test.
+- **New screens don't stop it.** When no picture matches (a new event, a pop-up, the title screen after a restart),
+  UmaBot reads the words on screen with a free offline OCR and presses a safe button (Close, OK, Next, Collect All…).
+  It never presses anything about carats, restoring TP or buying. Still stuck: a Discord message with the screenshot,
+  then it restarts the game. With the optional Discord bot you can answer it (`3`, `C4`, `restart`, `wait`…), and it
+  remembers what you pressed.
 
 ## ❓ FAQ
 

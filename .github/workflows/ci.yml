@@ -14,6 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install opencv-python-headless numpy pytest customtkinter pillow
+      - run: pip install --no-deps rapidocr_onnxruntime==1.4.4 && pip install onnxruntime pyclipper shapely pyyaml six tqdm
       - run: python -m pytest -q
       - name: Build the app window on a virtual display
         run: |
@@ -30,7 +31,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt pyinstaller
       - name: Build UmaBot.exe
-        run: pyinstaller --onefile --windowed --name UmaBot --icon assets/icon.ico --add-data "assets;assets" --collect-all customtkinter --collect-submodules umabot run.py
+        run: pyinstaller --onefile --windowed --name UmaBot --icon assets/icon.ico --add-data "assets;assets" --collect-all customtkinter --collect-all rapidocr_onnxruntime --collect-submodules umabot run.py
       - name: Smoke-test the .exe
         shell: pwsh
         run: |

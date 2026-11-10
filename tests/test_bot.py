@@ -135,12 +135,13 @@ def test_break_takes_no_screenshots(world):
     assert 5 <= wait <= 300 and mouse.clicks == []
 
 
-def test_stuck_stops(world):
-    cfg, vision, *_ = world
+def test_a_button_that_stops_working_is_set_aside_instead_of_stopping(world):
+    cfg, vision, _, rects, _ = world
     cfg["safety"]["max_repeats"] = 3
-    bot, _ = make_bot(cfg, vision)
-    results = [bot.step() for _ in range(5)]
-    assert None in results
+    bot, mouse = make_bot(cfg, vision)
+    results = [bot.step() for _ in range(6)]
+    assert None not in results and "start" in bot.blocked
+    assert inside(mouse.clicks[-1], rects["next"])  # the next rule that matches gets its turn
 
 
 def test_card_at_a_different_scale(world):
@@ -478,3 +479,204 @@ def test_discord_messages_report_problems_instead_of_crashing(monkeypatch):
     monkeypatch.setattr(logger.urllib.request, "urlopen", gone)
     assert "doesn't know that webhook" in logger.send_discord("https://discord.com/api/webhooks/1/abc", "hi")
     logger.notify("https://discord.com/api/webhooks/1/abc", "stopped")  # never raises
+
+
+# ---------------------------------------------------------------- unknown screens
+from umabot.reader import Word, decide  # noqa: E402
+
+
+class FakeReader:
+    def __init__(self, words):
+        self.words, self.reads = words, 0
+
+    def read(self, img):
+        self.reads += 1
+        return self.words
+
+
+class FakeGame:
+    def __init__(self):
+        self.restarts = self.starts = 0
+
+    def restart(self):
+        self.restarts += 1
+        return True
+
+    def start(self):
+        self.starts += 1
+        return True
+
+
+def unknown_world(world, words, **safety):
+    cfg, vision, *_ = world
+    cfg["rule"] = [{"name": "never", "if_seen": ["tp_popup"]}]  # nothing on this screen is known
+    cfg["safety"].update(safety)
+    clock = {"t": datetime(2026, 11, 4, 15, 0)}
+    reader, game = FakeReader(words), FakeGame()
+    bot = Bot(cfg, vision=vision, mouse=FakeMouse(), now=lambda: clock["t"], sleep=lambda s: None,
+              rng=random.Random(1), reader=reader, game=game)
+    bot.step()  # the first look measures the UI scale
+    return bot, clock, reader, game
+
+
+def test_unknown_screen_is_read_and_a_safe_button_pressed(world, monkeypatch):
+    words = [Word("Login Bonus", (800, 100, 300, 40)), Word("Close", (900, 900, 120, 40))]
+    bot, clock, reader, _ = unknown_world(world, words)
+    bot.step()
+    assert reader.reads == 0  # gives the screen time to settle first
+    clock["t"] += timedelta(seconds=10)
+    bot.step()
+    assert inside(bot.mouse.clicks[-1], (900, 900, 120, 40))
+    for _ in range(6):  # the screen doesn't change: three tries at most, then it stops pressing
+        clock["t"] += timedelta(seconds=10)
+        bot.step()
+    assert len(bot.mouse.clicks) == 3
+    import os
+    assert len(os.listdir(os.path.join(bot.logs_dir, "unknown"))) == 1  # kept once, for later
+
+
+def test_a_dialog_about_spending_only_gets_no():
+    words = [Word("You need 9 more TP to start a Career playthrough.", (0, 0, 500, 20)),
+             Word("Restore TP?", (0, 30, 100, 20)), Word("No", (100, 200, 40, 20)),
+             Word("Restore", (300, 200, 80, 20))]
+    assert decide(words)[0] == "No"
+    assert decide([Word("Use", (0, 0, 40, 20)), Word("OK", (0, 50, 40, 20)), Word("Close", (0, 90, 40, 20))])[0] == "Close"
+    assert decide([Word("Carats", (0, 0, 40, 20)), Word("Yes", (0, 50, 40, 20))]) is None
+    assert decide([Word("TAP TO START", (0, 0, 120, 20))])[0] == "tap to start"
+    assert decide([Word("Scout", (0, 0, 60, 20)), Word("Home", (0, 50, 60, 20))]) is None  # never Scout
+    assert decide([Word("Back", (0, 0, 60, 20))]) is None and decide([Word("Back", (0, 0, 60, 20))], allow_exits=True)
+
+
+def test_stuck_screen_sends_the_screenshot_then_restarts_the_game(world, monkeypatch):
+    sent = []
+    monkeypatch.setattr("umabot.recovery.notify", lambda hook, msg, image=None: sent.append((msg, image)))
+    bot, clock, reader, game = unknown_world(world, [])
+    for _ in range(26):
+        bot.step()
+        clock["t"] += timedelta(minutes=1)
+    assert sent and sent[0][1] and sent[0][1][:4] == b"\x89PNG" and "stuck" in sent[0][0]
+    assert game.restarts == 1 and bot.recovery.launched_at is not None
+
+
+def test_off_hours_home_screen_is_not_an_emergency(world, monkeypatch):
+    sent = []
+    monkeypatch.setattr("umabot.recovery.notify", lambda hook, msg, image=None: sent.append(msg))
+    bot, clock, reader, game = unknown_world(world, [Word("Home", (0, 0, 60, 20))])
+    for _ in range(40):
+        bot.recovery.unknown(bot.vision.capture(), clock["t"], expect_idle=True)
+        clock["t"] += timedelta(minutes=1)
+    assert sent == [] and game.restarts == 0 and bot.mouse.clicks == []
+
+
+def test_title_screen_after_reopening_gets_a_tap(world):
+    bot, clock, reader, game = unknown_world(world, [])
+    bot.recovery.launched_at = clock["t"]
+    bot.step()
+    clock["t"] += timedelta(seconds=10)
+    bot.step()
+    x, y, *_ = bot.mouse.clicks[-1]
+    assert abs(x - 960) < 60 and abs(y - 1080 * 0.82) < 30
+
+
+def test_closed_game_is_opened_again(world):
+    bot, clock, reader, game = unknown_world(world, [])
+    t = clock["t"]
+    assert bot.recovery.no_window(t, True) is None
+    assert bot.recovery.no_window(t + timedelta(minutes=6), True) == 60 and game.starts == 1
+    assert bot.recovery.no_window(t + timedelta(minutes=8), True) is None and game.starts == 1  # not again so soon
+    assert bot.recovery.no_window(t + timedelta(minutes=30), False) is None  # off hours: leave it closed
+
+
+# ---------------------------------------------------------------- answering from Discord
+from umabot.remote import Remote, annotate, cell_center, channel_id  # noqa: E402
+
+
+class FakeDiscord:
+    def __init__(self):
+        self.inbox, self.posts, self.n = [], [], 100
+
+    def me(self):
+        return {"id": "bot"}
+
+    def send(self, text, author="me", bot=False):
+        self.n += 1
+        self.inbox.append({"id": str(self.n), "content": text, "author": {"id": author, "bot": bot}})
+
+    def latest(self, after=None):
+        return [m for m in self.inbox if after is None or int(m["id"]) > int(after)][-50:]
+
+    def post(self, text, image=None):
+        self.posts.append((text, image))
+
+
+def remote_world(world, words):
+    bot, clock, reader, game = unknown_world(world, words)
+    d = FakeDiscord()
+    d.send("old message, before UmaBot started")
+    remote = Remote(d)
+    remote.me, remote.last_id = "bot", d.latest()[-1]["id"]  # what start() does, without the thread
+    bot.remote = remote
+    return bot, clock, d, remote, game
+
+
+def say(d, remote, text):
+    d.send(text)
+    remote.fetch()
+
+
+def test_channel_links_and_cells():
+    assert channel_id("https://discord.com/channels/111111111111111111/222222222222222222") == "222222222222222222"
+    assert channel_id("222222222222222222") == "222222222222222222" and channel_id("hello") is None
+    assert cell_center("a1", 800, 600) == (50, 50) and cell_center("H6", 800, 600) == (750, 550)
+    assert cell_center("Z9", 800, 600) is None
+    img = np.zeros((600, 800, 3), np.uint8)
+    assert annotate(img, [Word("OK", (100, 100, 40, 20))]).any()
+
+
+def test_stuck_screen_is_sent_numbered_and_a_number_answer_presses_and_is_remembered(world):
+    words = [Word("Event Mission", (700, 100, 400, 40)), Word("Go!", (1300, 880, 120, 50))]  # no safe word
+    bot, clock, d, remote, game = remote_world(world, words)
+    for _ in range(7):  # 5 minutes on a screen it can't read its way out of
+        bot.step()
+        clock["t"] += timedelta(minutes=1)
+    asks = [p for p in d.posts if p[1] is not None]
+    assert len(asks) == 1 and "stuck" in asks[0][0] and asks[0][1][:4] == b"\x89PNG"
+    say(d, remote, "2")
+    bot.step()
+    assert inside(bot.mouse.clicks[-1], (1300, 880, 120, 50))
+    assert "Pressed Go!" in d.posts[-1][0] and "next time" in d.posts[-1][0]
+    clicks = len(bot.mouse.clicks)
+    bot.step()  # same screen again: pressed alone now, from the picture it learned
+    assert len(bot.mouse.clicks) == clicks + 1 and bot.last[0] == "Learned: Go!"
+    again, _ = make_bot(bot.cfg, bot.vision)  # and after a restart of UmaBot too
+    assert any(r.name == "Learned: Go!" and r.enabled for r in again.rules)
+
+
+def test_presses_about_spending_are_never_remembered(world):
+    words = [Word("Restore TP?", (700, 300, 300, 40)), Word("Restore", (1100, 880, 160, 50))]
+    bot, clock, d, remote, game = remote_world(world, words)
+    remote.ask(bot, bot.vision.capture(), clock["t"])
+    say(d, remote, "2")
+    bot.step()
+    assert inside(bot.mouse.clicks[-1], (1100, 880, 160, 50))  # the user asked for it: pressed once
+    assert "next time" not in d.posts[-1][0] and not any(r.name.startswith("Learned") for r in bot.rules)
+
+
+def test_discord_commands(world):
+    bot, clock, d, remote, game = remote_world(world, [])
+    say(d, remote, "status")
+    bot.step()
+    assert "Runs today" in d.posts[-1][0]
+    say(d, remote, "pause")
+    assert bot.step() == 30 and bot.status == "Paused from Discord"
+    assert bot.step() == 30
+    say(d, remote, "start")
+    bot.step()
+    assert bot.status != "Paused from Discord"
+    say(d, remote, "restart")
+    bot.step()
+    assert game.restarts == 1
+    d.send("I'm another bot", author="x", bot=True)
+    say(d, remote, "stop")
+    assert bot.step() is None and bot.status == "Stopped from Discord"
+    assert not any("didn't get" in p[0] for p in d.posts)

@@ -4,3 +4,4 @@ mss>=9.0
 pyautogui>=0.9.54
 customtkinter>=5.2
 pillow>=10.0
+rapidocr_onnxruntime==1.4.4  # offline screen reading (models included); needs Python 3.12 or older

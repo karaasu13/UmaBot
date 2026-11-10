@@ -283,3 +283,23 @@ def test_not_enough_tp_says_no_and_waits(base):
     assert wait >= 60 and len(mouse.clicks) == 1
     x, y = mouse.clicks[0]
     assert x < 320 and 380 < y < 430  # the No button, left; Restore is on the right
+
+
+@pytest.fixture(scope="module")
+def reader():
+    pytest.importorskip("rapidocr_onnxruntime")
+    from umabot.reader import Reader
+    return Reader()
+
+
+@pytest.mark.parametrize("screen,label", [
+    ("10_training_log", "OK"), ("12_finish_dialog", "Finish"), ("13_career_rank", "Next"),
+    ("16_details", "Close"), ("18_rewards_fans", "Next"), ("20_career_complete", "To Home"),
+    ("s05_autoselect_dialog", "OK"), ("s16_recover_tp", "Close"), ("s17_tp_not_enough", "No"),
+    ("s01_home", None),
+])
+def test_reading_real_screens_picks_the_right_button(reader, screen, label):
+    # what UmaBot would do on these screens if an event changed their look and no picture matched
+    from umabot.reader import decide
+    choice = decide(reader.read(cv2.imread(os.path.join(SCREENS, screen + ".png"))))
+    assert (choice[0] if choice else None) == label
