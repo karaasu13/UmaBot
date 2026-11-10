@@ -48,7 +48,7 @@ max_failures = 8                # stop if the card isn't found X times in a row
 
 [safety]
 max_repeats = 25                # same click X times in a row without the screen changing = stuck, stop
-unknown_screen_min = 40         # X min without recognising the screen: save a screenshot to logs/
+unknown_screen_min = 10         # X min on a screen it can't get past (words not changing): alert, then restart
 discord_webhook = ""            # optional: webhook URL to get notified when the bot stops
 stop_on_user_input = true       # stop as soon as you use the mouse or keyboard
 
@@ -154,6 +154,16 @@ if_seen = ["my_agendas_window"]
 action = "agenda"
 once_per_run = true
 only_if = "load_agenda"
+
+[[rule]]
+name = "Event Boost"
+# "Event Boost (TP Usage x2)" during events: ticked if the option is on (it checks the cost doubled)
+if_seen = ["final_confirmation", "event_boost_off"]
+click = "event_boost_off"
+action = "boost"
+once_per_run = true
+only_if = "event_boost"
+optional = true
 
 [[rule]]
 name = "Start Independent Training (spends 30 TP)"

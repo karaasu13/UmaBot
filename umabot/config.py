@@ -36,8 +36,10 @@ DEFAULTS = {
         "focus": "sprint",                           # balanced | stamina | sprint
         "agenda": "",                                # name of a saved agenda in My Agendas ("" = keep the game's)
         "veterans_free": -1,                         # free spaces in the veterans list (-1 = don't track)
+        "event_boost": True,                         # tick "Event Boost (TP Usage x2)" when the game has one
     },
-    "tp": {"wait_min": [25, 45], "guess_after": 3, "guess_window_min": 10},
+    "tp": {"wait_min": [25, 45], "guess_after": 3, "guess_window_min": 10, "run_cost": 30, "regen_min": 10,
+           "ask_toughness": True, "ask_minutes": 10},
     "card": {
         "id": 0,            # GameTora ID of the support card to borrow (0 = not chosen yet)
         "name": "",
@@ -52,10 +54,10 @@ DEFAULTS = {
     },
     "safety": {
         "max_repeats": 25,
-        "unknown_screen_min": 45,   # no known screen for this long (even if it moves): alert, then restart
+        "unknown_screen_min": 10,   # moving, but its words not changing, for this long: alert, then restart
         "read_screen": True,        # read the words on unknown screens and press safe buttons
         "read_after_s": 8,
-        "stuck_alert_min": 5,       # the same unknown screen, not moving, for this long: alert
+        "stuck_alert_min": 2,       # the same unknown screen, not moving, for this long: alert
         "restart_game": True,       # close and reopen the game when really stuck (or open it if it's gone)
         "restart_after_min": 20,
         "reopen_after_min": 5,

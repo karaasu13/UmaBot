@@ -61,17 +61,40 @@ class Word:
         return f"Word({self.text!r})"
 
 
-def decide(words, allow_exits=False):
-    """(label, word) of the button to press, or None. Never a button of a spending or quitting dialog."""
-    danger = any(any(d in w.key for d in DANGER_IN_TEXT) or DANGER_BUTTONS.match(w.key) for w in words)
-    groups = [DECLINE] if danger else [PROGRESS, DECLINE]
+def is_danger(words):
+    return any(any(d in w.key for d in DANGER_IN_TEXT) or DANGER_BUTTONS.match(w.key) for w in words)
+
+
+def decide(words, allow_exits=False, skip=()):
+    """(label, word) of the button to press, or None.
+    A dialog about spending or quitting only ever gets No / Cancel / Close. Anywhere else only buttons that
+    move forward are pressed: never Cancel or No there (they'd undo what the bot is doing and loop)."""
+    groups = [DECLINE] if is_danger(words) else [PROGRESS]
     if allow_exits:
         groups.append(EXITS)
     for group in groups:
         for label, pattern in group:
+            if label in skip:
+                continue
             hits = [w for w in words if re.match(pattern, w.key) and w.score >= 0.6]
             if hits:
                 return label, max(hits, key=lambda w: (w.box[1], w.score))  # a dialog's button: the lowest one
+    return None
+
+
+APPROVED = [("OK", r"^ok$"), ("Use", r"^use$"), ("Yes", r"^yes$"), ("Confirm", r"^confirm$"), ("Restore", r"^restore$")]
+
+
+def decide_approved(words, item):
+    """After the user said yes on Discord to using `item` (e.g. 'toughness'): the button that confirms using it,
+    on a dialog that names that item and never carats."""
+    keys = " ".join(w.key for w in words)
+    if item not in keys or "carat" in keys or "jewel" in keys:
+        return None
+    for label, pattern in APPROVED:
+        hits = [w for w in words if re.match(pattern, w.key) and w.score >= 0.6]
+        if hits:
+            return label, max(hits, key=lambda w: (w.box[1], w.score))
     return None
 
 

@@ -707,3 +707,41 @@ def test_with_only_the_discord_bot_every_message_goes_through_it(world, monkeypa
     assert wait_for(lambda: len(d.posts) >= 2)
     texts = [p[0] for p in d.posts]
     assert any("veterans" in t for t in texts) and any("run #1" in t for t in texts)
+
+
+def test_a_button_pressed_in_a_loop_is_dropped_and_reported(world, monkeypatch):
+    sent = []
+    monkeypatch.setattr("umabot.recovery.notify", lambda hook, msg, image=None: sent.append(msg))
+    cfg, vision, state, *_ = world
+    a = state["img"]
+    b = a.copy()
+    b[200:800, 300:1500] = 255  # a dialog
+    bot, clock, reader, _ = unknown_world(world, [Word("OK", (900, 900, 60, 40))])
+    for i in range(12):  # OK opens something that comes back to the same thing: open, close, open...
+        state["img"] = a if i % 2 else b
+        clock["t"] += timedelta(seconds=10)
+        bot.step()
+    assert len(bot.mouse.clicks) == 4 and "OK" in bot.recovery.banned and "over and over" in sent[-1]
+    clicks = len(bot.mouse.clicks)
+    for i in range(6):
+        state["img"] = a if i % 2 else b
+        clock["t"] += timedelta(seconds=10)
+        bot.step()
+    assert len(bot.mouse.clicks) == clicks  # not pressed again for a while
+
+
+def test_a_moving_screen_that_goes_nowhere_is_reported_after_10_minutes(world, monkeypatch):
+    sent = []
+    monkeypatch.setattr("umabot.recovery.notify", lambda hook, msg, image=None: sent.append(msg))
+    cfg, vision, state, *_ = world
+    a = state["img"]
+    b = a.copy()
+    b[200:800, 300:1500] = 255  # the animation
+    bot, clock, reader, game = unknown_world(world, [Word("Event", (0, 0, 60, 20))])
+    alerts = []
+    for i in range(14):  # an animation: the picture changes, the words don't
+        state["img"] = a if i % 2 else b
+        bot.step()
+        alerts.append(bool(sent))
+        clock["t"] += timedelta(minutes=1)
+    assert not any(alerts[:9]) and alerts[-1] and game.restarts == 0

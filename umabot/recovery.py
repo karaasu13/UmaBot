@@ -12,7 +12,7 @@ import cv2
 
 from .human import between
 from .logger import log, notify
-from .reader import decide
+from .reader import decide, decide_approved
 
 
 def changed(a, b):
@@ -38,6 +38,9 @@ class Recovery:
         self.last_restart = None
         self.launched_at = None        # when UmaBot (re)opened the game
         self.missing_since = None
+        self.text, self.text_since = None, None  # the words last read, and since when they're the same
+        self.pressed = []              # (when, label) of buttons pressed by reading
+        self.banned = {}               # label -> until (it was pressed in a loop)
         self.kept = []                 # small copies of the screens already saved in logs/unknown
 
     @property
@@ -47,6 +50,7 @@ class Recovery:
     # ---------------------------------------------------------------- called by the bot
     def known_screen(self):
         self.unknown_since, self.alerted, self.presses = None, False, 0
+        self.text, self.text_since = None, None
 
     def no_window(self, now, can_act):
         """The game window isn't there: after a few minutes (while playing), open the game."""
@@ -72,6 +76,8 @@ class Recovery:
         pop-ups are dealt with, without alerts or restarts."""
         if self.unknown_since is None:
             self.unknown_since = now
+        if self.text_since is None:
+            self.text_since = now
         small = cv2.resize(frame.small(), None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
         if changed(self.sig, small):
             self.sig, self.static_since, self.presses = small, now, 0
@@ -81,34 +87,65 @@ class Recovery:
         wait = self._read(frame, now, unknown_s, static_s, expect_idle)
         if wait is not None or expect_idle:
             return wait
-        return self._escalate(frame, now, unknown_s, static_s)
+        same_text_s = min(unknown_s, (now - self.text_since).total_seconds())
+        return self._escalate(frame, now, same_text_s, static_s)
 
     # ---------------------------------------------------------------- 1. reading
     def _read(self, frame, now, unknown_s, static_s, expect_idle):
         c = self.cfg
-        if not c.get("read_screen", True) or self.presses >= 3:
+        if not c.get("read_screen", True):
             return None
         if static_s < c.get("read_after_s", 8) and unknown_s < 60:
             return None  # give the screen time to settle (and the bot's pictures a chance)
         if self.next_read and now < self.next_read:
             return None
         words = self.reader.read(frame.raw)
-        choice = decide(words, allow_exits=not expect_idle and static_s >= 150)
+        text = frozenset(w.key for w in words)
+        if text != self.text:
+            self.text, self.text_since = text, now  # the words changed: something is happening
+        self.next_read = now + timedelta(seconds=45)
+
+        # a Toughness the user allowed on Discord: confirm its dialog
+        approval = getattr(self.bot, "tp_approval", None)
+        if approval and now < approval[0]:
+            choice = decide_approved(words, "toughness")
+            if choice:
+                self.next_read = now + timedelta(seconds=3)
+                return self._press_word(frame, choice[1], f"confirming the Toughness: '{choice[1].text}'")
+        # the steps before a run, by their words (Final Confirmation, the agenda)
+        wait = self.bot.by_text(frame, words, can_start=not expect_idle)
+        if wait is not None:
+            self.next_read = now + timedelta(seconds=3)
+            return wait
+        if self.presses >= 3:
+            return None
+        banned = {label for label, until in self.banned.items() if now < until}
+        choice = decide(words, allow_exits=not expect_idle and static_s >= 150, skip=banned)
         if choice is None:
             if self._just_launched(now) and not expect_idle:
                 # title screen after (re)opening the game: a tap anywhere starts it
                 self.next_read = now + timedelta(seconds=12)
                 return self._tap(frame, (0.5, 0.82), "tapping the title screen")
-            self.next_read = now + timedelta(seconds=45)
             return None
         label, word = choice
+        # the same button again and again (open, close, open...): a loop. Stop pressing it and say so.
+        self.pressed = [(t, lb) for t, lb in self.pressed if now - t < timedelta(minutes=10)] + [(now, label)]
+        if sum(1 for _, lb in self.pressed if lb == label) > 4:
+            self.banned[label] = now + timedelta(minutes=20)
+            self.pressed = [(t, lb) for t, lb in self.pressed if lb != label]
+            notify(self.bot.webhook(), f"I pressed '{word.text}' over and over without getting anywhere, so I stopped "
+                                       "pressing it.", image=png(frame.raw))
+            return None
         self.keep(frame, label)
         self.presses += 1
         self.next_read = now + timedelta(seconds=3)
+        return self._press_word(frame, word, f"unknown screen: pressing '{word.text}'")
+
+    def _press_word(self, frame, word, what):
         x, y, w, h = word.box
         k = frame.rect[2] / frame.raw.shape[1]  # screen px per captured px (1 unless the capture was scaled)
         return self._press(frame.rect[0] + (x + w / 2) * k, frame.rect[1] + (y + h / 2) * k,
-                           max(12, w * k), max(12, h * k), f"unknown screen: pressing '{word.text}'")
+                           max(12, w * k), max(12, h * k), what)
 
     def _press(self, cx, cy, w, h, what):
         bot = self.bot
@@ -151,9 +188,11 @@ class Recovery:
         return path
 
     # ---------------------------------------------------------------- 3 and 4. asking for help, restarting
-    def _escalate(self, frame, now, unknown_s, static_s):
+    def _escalate(self, frame, now, same_text_s, static_s):
+        """Not moving at all for a couple of minutes, or moving without its words changing for a while
+        (an animation on a screen it can't get past): say so on Discord, then restart the game."""
         c = self.cfg
-        stuck = static_s >= c.get("stuck_alert_min", 5) * 60 or unknown_s >= c.get("unknown_screen_min", 45) * 60
+        stuck = static_s >= c.get("stuck_alert_min", 2) * 60 or same_text_s >= c.get("unknown_screen_min", 10) * 60
         if not stuck:
             return None
         if not self.alerted:
@@ -171,7 +210,7 @@ class Recovery:
         if help_wait is not None:
             return help_wait
         restart = static_s >= c.get("restart_after_min", 20) * 60 or \
-            unknown_s >= (c.get("unknown_screen_min", 45) + 30) * 60
+            same_text_s >= (c.get("unknown_screen_min", 10) + 20) * 60
         if c.get("restart_game") and restart and \
                 (self.last_restart is None or now - self.last_restart >= timedelta(minutes=45)):
             notify(self.bot.webhook(), "Still stuck: restarting the game.")
@@ -179,6 +218,7 @@ class Recovery:
             if self.game.restart():
                 self.launched_at = now
                 self.unknown_since, self.static_since, self.sig, self.presses = now, now, None, 0
+                self.text, self.text_since = None, now
                 self.alerted = False
             return 60
         return between(self.bot.rng, (20, 40))

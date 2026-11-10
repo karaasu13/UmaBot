@@ -6,6 +6,7 @@ Answer in the channel with:
   restart    close and reopen the game          wait      leave it alone for 30 min
   print      a new screenshot                   status    what it's doing
   pause / start                                  stop      stop UmaBot
+  yes / no / always   to its questions (e.g. "Out of TP. Can I use 1 Toughness 30?")
 What you press from Discord is remembered: the next time that screen shows up UmaBot presses it alone."""
 import json
 import os
@@ -25,6 +26,7 @@ API = "https://discord.com/api/v10"
 COLS, ROWS = "ABCDEFGH", 6
 HELP = ("Answer with a word's number (e.g. `3`), a cell (e.g. `C4`), `restart`, `wait`, `print`, `status`, "
         "`pause`, `start` or `stop`.")
+YES, NO, ALWAYS = {"yes", "y", "sim", "s", "ok", "pode"}, {"no", "n", "nao", "não", "nope"}, {"always", "sempre"}
 
 
 def channel_id(text):
@@ -132,6 +134,9 @@ class Remote:
         self.asked = None        # (signature, words, frame) of the screen last sent for help
         self.quiet_until = None  # after "wait"
         self.paused = False
+        self.question = None     # (key, when asked) of a yes/no question waiting for an answer
+        self.answers = {}        # key -> "yes" | "no"
+        self.always = set()      # keys answered "always" (until UmaBot is restarted)
         self._stop = threading.Event()
         self._thread = None
 
@@ -191,6 +196,26 @@ class Remote:
         self.say("I'm stuck on this screen. " + HELP, buf.tobytes() if ok else None)
         return None
 
+    def ask_yes_no(self, key, text, image=None, now=None):
+        """Asks once; the answer arrives through handle(). See answer()."""
+        if key in self.always:
+            return
+        if self.question is None or self.question[0] != key:
+            self.question = (key, now)
+            self.answers.pop(key, None)
+            self.say(text + " Answer `yes`, `no` or `always`.", image)
+
+    def answer(self, key):
+        """'yes', 'no' or None (not answered yet). 'always' counts as yes from then on."""
+        if key in self.always:
+            return "yes"
+        return self.answers.get(key)
+
+    def forget(self, key):
+        self.answers.pop(key, None)
+        if self.question and self.question[0] == key:
+            self.question = None
+
     def handle(self, bot, now):
         """Runs the commands that arrived. Returns seconds to wait, "stop", or None to carry on."""
         result = None
@@ -203,7 +228,15 @@ class Remote:
         return result
 
     def _command(self, bot, cmd, now):
-        cmd = cmd.strip().strip("`").strip()
+        cmd = cmd.strip().strip("`").strip().rstrip("!.")
+        if self.question and cmd in YES | NO | ALWAYS:
+            key = self.question[0]
+            if cmd in ALWAYS:
+                self.always.add(key)
+            self.answers[key] = "no" if cmd in NO else "yes"
+            self.question = None
+            self.say("OK." if cmd in NO else "OK, doing it.")
+            return 0.5
         if cmd in ("stop", "quit"):
             self.say("Stopping UmaBot.")
             return "stop"

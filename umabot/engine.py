@@ -16,12 +16,13 @@ from . import config
 from .human import Mouse, between
 from .game import STEAM_APP_ID, Game
 from .logger import log, notify, send_discord
+from .flows import held, need_tp, row_button, spend_tp, tp_now
 from .reader import Reader
-from .recovery import Recovery
+from .recovery import Recovery, png
 from .schedule import Schedule
 from .vision import Match, Vision
 
-ACTIONS = {"click", "stop", "card", "wait_tp", "center", "trainee", "agenda"}
+ACTIONS = {"click", "stop", "card", "wait_tp", "center", "trainee", "agenda", "boost"}
 
 
 @dataclass
@@ -175,7 +176,7 @@ def rule_options(cfg):
     t = cfg["training"]
     slug = agenda_slug(t.get("agenda"))
     subs = {"focus": t.get("focus", "sprint"), "agenda": slug}
-    flags = {"load_agenda": bool(slug)}
+    flags = {"load_agenda": bool(slug), "event_boost": bool(t.get("event_boost", True))}
     return subs, flags
 
 
@@ -231,6 +232,10 @@ class Bot:
         self.done_this_run = set()  # once_per_run rules already used
         self.notices = []    # messages for the app
         self.blocked = {}    # rule name -> until when it's skipped (its button stopped working)
+        self.agenda_loaded, self.agenda_tries = False, 0  # this run's agenda (Start waits for it)
+        self.last_spend = None     # TP the last run cost (30, or 60 with the Event Boost)
+        self.tp_asked_at = None
+        self.tp_approval = None    # [until, used]: a Toughness the user allowed on Discord
         self.recovery = Recovery(self, reader if reader is not None else Reader(),
                                  game or Game(self.vision, cfg["safety"].get("steam_app_id", STEAM_APP_ID)))
         self.remote = remote  # Discord commands (optional)
@@ -269,13 +274,26 @@ class Bot:
             log.info("not set up yet (skipped): " + "; ".join(off))
 
     # ------------------------------------------------------------ decision
+    AGENDA_RULES = ("Open the agenda", "Open My Agendas", "Load the saved agenda")
+
+    def need_agenda(self):
+        return rule_options(self.cfg)[1]["load_agenda"] and not self.agenda_loaded
+
     def evaluate(self, frame, block_run_start=False):
         now = self.now()
+        if self.need_agenda() and self.agenda_tries < 3 and any(a in self.done_this_run for a in self.AGENDA_RULES) \
+                and frame.sees("final_confirmation"):
+            # back on Final Confirmation without the agenda loaded: open it again (3 tries per run)
+            self.done_this_run -= set(self.AGENDA_RULES)
         for r in self.rules:
             if not r.enabled or (block_run_start and r.starts_run):
                 continue
             if r.name in self.blocked and now < self.blocked[r.name]:
                 continue
+            if r.counts_run and self.need_agenda():
+                continue  # never start a run without its agenda
+            if r.name in self.AGENDA_RULES and self.agenda_loaded:
+                continue  # loaded already this run
             if r.action == "card" and self.card_pause_until and now < self.card_pause_until:
                 continue
             if r.once_per_run and r.name in self.done_this_run:
@@ -365,7 +383,7 @@ class Bot:
         key = (r.name, target)
         self.repeats = self.repeats + 1 if key == self.last else 1
         self.last = key
-        if r.action != "card" and self.repeats > self.cfg["safety"]["max_repeats"]:
+        if r.action not in ("card", "wait_tp") and self.repeats > self.cfg["safety"]["max_repeats"]:
             # its button doesn't do anything anymore (an event changed the screen?): set that rule aside for
             # a while and let the screen reading (and, if needed, a restart) get past it
             self.save_screenshot(frame, "stuck")
@@ -438,6 +456,8 @@ class Bot:
             return None
         if r.once_per_run:
             self.done_this_run.add(r.name)
+        if r.name == "Open the agenda":
+            self.agenda_tries += 1
         if r.notify:
             self.notices.append(r.notify)
             notify(self.webhook(), r.notify)
@@ -447,6 +467,10 @@ class Bot:
             return self.pick_trainee()
         if r.action == "agenda":
             return self.load_agenda(frame.find(r.if_seen[0]) if r.if_seen else None)
+        if r.action == "boost":
+            return self.boost(frame)
+        if r.action == "wait_tp":
+            return self.out_of_tp(target, frame)
 
         self.mouse.react()
         if self.should_stop():
@@ -466,32 +490,194 @@ class Bot:
         self.vision.bring_to_front()
         self.mouse.click(x, y, w, h)
         if r.counts_run:
-            self.runs_today += 1
-            self.run_times.append(self.now())
-            self.tp_tries = []
-            self.done_this_run = set()
-            self._use_veteran_slot()
-            log.info(f"run #{self.runs_today} of the day started")
-            if self.cfg["safety"].get("discord_each_run"):
-                text = f"UmaBot: run #{self.runs_today} of the day started."
-                if self.webhook():
-                    threading.Thread(target=send_discord, args=(self.webhook(), text), daemon=True).start()
-                elif self.remote is not None:  # only the Discord bot is set up: it sends it
-                    threading.Thread(target=self.remote.say, args=(text,), daemon=True).start()
+            self._run_started()
         if r.checks_tp and self._looks_out_of_tp():
-            r = Rule(name=r.name, if_seen=r.if_seen, action="wait_tp")
-            log.info(f"'{r.name}' was pressed {self.cfg['tp']['guess_after']} times without a run starting: "
-                     "probably out of TP")
-        if r.action == "wait_tp":
-            if self.run_times and (self.now() - self.run_times[-1]).total_seconds() < 60:
-                self.run_times.pop()  # that "run" never started: the TP window came up instead
-                self.runs_today -= 1
-            mins = between(self.rng, self.cfg["tp"]["wait_min"])
-            log.info(f"out of TP, trying again in {mins:.0f} min")
-            self.set_status(f"Out of TP, retrying at {self.now() + timedelta(minutes=mins):%H:%M}", "wait")
-            return mins * 60
+            return self._tp_guess()
         self.mouse.maybe_distract(log.info)
         return between(self.rng, self.cfg["human"]["poll_s"])
+
+    def _run_started(self):
+        self.runs_today += 1
+        self.run_times.append(self.now())
+        self.tp_tries = []
+        self.done_this_run = set()
+        self.agenda_loaded, self.agenda_tries = False, 0
+        self._use_veteran_slot()
+        log.info(f"run #{self.runs_today} of the day started")
+        if self.cfg["safety"].get("discord_each_run"):
+            text = f"UmaBot: run #{self.runs_today} of the day started."
+            if self.webhook():
+                threading.Thread(target=send_discord, args=(self.webhook(), text), daemon=True).start()
+            elif self.remote is not None:  # only the Discord bot is set up: it sends it
+                threading.Thread(target=self.remote.say, args=(text,), daemon=True).start()
+
+    def _press_word(self, frame, word, what):
+        x, y, w, h = word.box
+        k = frame.rect[2] / frame.raw.shape[1]
+        m = Match(round(frame.rect[0] + (x + w / 2) * k), round(frame.rect[1] + (y + h / 2) * k),
+                  round(max(w, 24) * k), round(max(h, 12) * k), 1.0)
+        return self._click_match(m, what)
+
+    def _read(self, frame):
+        return self.recovery.reader.read(frame.raw) if frame is not None else []
+
+    # ------------------------------------------------------------ TP
+    def run_cost(self):
+        if self.last_spend:
+            return self.last_spend
+        base = self.cfg["tp"].get("run_cost", 30)
+        return base * (2 if rule_options(self.cfg)[1]["event_boost"] else 1)
+
+    def _undo_run_count(self):
+        if self.run_times and (self.now() - self.run_times[-1]).total_seconds() < 90:
+            self.run_times.pop()  # that "run" never started: the TP window came up instead
+            self.runs_today -= 1
+
+    def out_of_tp(self, target, frame):
+        """The game says there isn't enough TP ("Restore TP?" or the Recover TP list). With the Discord bot,
+        asks whether a Toughness 30 may be used; otherwise (or on "no", or no answer) says No and waits."""
+        self._undo_run_count()
+        now = self.now()
+        words = self._read(frame)
+        on_list = bool(frame.sees("tp_popup")) or bool(row_button(words, r"toughness", r"use")[1])
+        if self.tp_approval and now < self.tp_approval[0]:
+            if not self.tp_approval[1]:
+                return self._use_toughness(frame, words, on_list)
+            self.tp_approval = None  # used: close the list and carry on, the TP is there now
+            return self._press_target(frame, target, "closing Recover TP")
+        if self.remote is not None and self.cfg["tp"].get("ask_toughness", True):
+            ans = self.remote.answer("toughness")
+            if ans is None:
+                if self.remote.question is None or self.remote.question[0] != "toughness":
+                    need, have = need_tp(words), held(words, r"toughness")
+                    text = ("Out of TP" + (f" ({need} more needed)" if need else "") + ". Can I use 1 Toughness 30"
+                            + (f" (you have {have})" if have else "") + "?")
+                    self.remote.ask_yes_no("toughness", text, png(frame.raw), now)
+                    self.tp_asked_at = now
+                mins = self.cfg["tp"].get("ask_minutes", 10)
+                if self.tp_asked_at and now - self.tp_asked_at < timedelta(minutes=mins):
+                    self.set_status("Out of TP: asked on Discord about a Toughness", "wait")
+                    return 15
+                ans = "no"  # no answer: carry on without it
+            if "toughness" not in self.remote.always:
+                self.remote.forget("toughness")
+            if ans == "yes":
+                self.tp_approval = [now + timedelta(minutes=3), False]
+                return self._use_toughness(frame, words, on_list)
+        need = need_tp(words)
+        self._press_target(frame, target, "no TP restore")
+        return self._wait_for_tp(need, frame)
+
+    def _use_toughness(self, frame, words, on_list):
+        if not on_list:  # "Restore TP?": Restore opens the Recover TP list
+            hits = [w for w in words if w.key == "restore"]
+            if hits:
+                return self._press_word(frame, max(hits, key=lambda w: w.box[1]), "Restore TP (allowed on Discord)")
+            return self._press_target(frame, "no", "no TP restore")
+        row, use = row_button(words, r"toughness", r"use")
+        if use is None:
+            self.tp_approval = None
+            notify(self.webhook(), "I couldn't find the Toughness 30 in Recover TP, so I'll wait for TP instead.",
+                   image=png(frame.raw))
+            self._press_target(frame, "close", "closing Recover TP")
+            return self._wait_for_tp(None, frame)
+        self.tp_approval[1] = True
+        log.info("using 1 Toughness 30 (allowed on Discord)")
+        return self._press_word(frame, use, f"pressing Use on {row.text}")
+
+    def _press_target(self, frame, target, what):
+        m = frame.find(target) if target else None
+        if m is None:
+            return 1.0
+        return self._click_match(m, what)
+
+    def _wait_for_tp(self, need, frame):
+        """Waits until there's TP for a run: from what the game says is missing if it says so."""
+        regen = self.cfg["tp"].get("regen_min", 10)
+        if need:
+            mins = need * regen + self.rng.uniform(2, 8)
+        else:
+            mins = between(self.rng, self.cfg["tp"]["wait_min"])
+        mins = min(max(mins, 10), 360)
+        until = self.now() + timedelta(minutes=mins)
+        msg = "Out of TP" + (f" ({need} more needed)" if need else "") + f": waiting until {until:%H:%M}."
+        self.set_status(f"Out of TP, retrying at {until:%H:%M}", "wait")
+        notify(self.webhook(), msg, image=png(frame.raw) if frame is not None else None)
+        return mins * 60
+
+    def _tp_guess(self):
+        """Start Career pressed again and again without a run starting. Before deciding it's TP, look at the TP."""
+        frame = self.vision.capture()
+        words = self._read(frame)
+        tp, cost = tp_now(words), self.run_cost()
+        if tp is not None and tp >= cost:
+            name = "Start career"
+            self.blocked[name] = self.now() + timedelta(minutes=10)
+            notify(self.webhook(), f"Start Career was pressed several times and no run started, but there's {tp} TP: "
+                                   "something else is in the way. Trying something else for 10 min.",
+                   image=png(frame.raw) if frame is not None else None)
+            return 2.0
+        self._undo_run_count()
+        return self._wait_for_tp((cost - tp) if tp is not None else None, frame)
+
+    # ------------------------------------------------------------ Event Boost
+    def boost(self, frame):
+        """Ticks "Event Boost (TP Usage x2)" (it doubles the TP a run costs). Checks the cost doubled, so a box
+        that was already ticked is never unticked."""
+        words = self._read(frame)
+        before = spend_tp(words)
+        base = self.cfg["tp"].get("run_cost", 30)
+        if before is not None and before >= 2 * base:
+            self.last_spend = before
+            return 0.5  # already on
+        m = frame.find("event_boost_off")
+        if m is None:
+            hits = [w for w in words if w.key.startswith("eventboost")]
+            if not hits:
+                return 0.5
+            w = hits[0]
+            k = frame.rect[2] / frame.raw.shape[1]
+            x, y, bw, bh = w.box
+            m = Match(round(frame.rect[0] + (x - 2.0 * bh) * k), round(frame.rect[1] + (y + bh / 2) * k),
+                      round(bh * k), round(bh * k), 1.0)
+        self._click_match(m, "ticking Event Boost (TP x2)")
+        self.sleep(self.rng.uniform(0.6, 1.0))
+        after = spend_tp(self._read(self.vision.capture()))
+        if after:
+            self.last_spend = after
+            if before and after < before:  # it was on after all: put it back
+                self._click_match(m, "Event Boost was already on: ticking it again")
+                self.last_spend = before
+        log.info(f"a run costs {self.last_spend or '?'} TP")
+        return between(self.rng, self.cfg["human"]["poll_s"])
+
+    # ------------------------------------------------------------ the career screens, by their words
+    def by_text(self, frame, words, can_start):
+        """No picture matched: recognise the steps before a run by their words. Returns seconds or None."""
+        keys = [w.key for w in words]
+        word = lambda key: next((w for w in sorted(words, key=lambda w: -w.box[1]) if w.key == key), None)
+        if "finalconfirmation" in keys:
+            if self.need_agenda() and self.agenda_tries < 3 and word("edit"):
+                self.agenda_tries += 1
+                return self._press_word(frame, word("edit"), "Final Confirmation (read): opening the agenda")
+            if rule_options(self.cfg)[1]["event_boost"] and "Event Boost" not in self.done_this_run and \
+                    any(k.startswith("eventboost") for k in keys):
+                self.done_this_run.add("Event Boost")
+                return self.boost(frame)
+            if can_start and not self.need_agenda() and word("start"):
+                cost = spend_tp(words)
+                if cost:
+                    self.last_spend = cost
+                wait = self._press_word(frame, word("start"), "Final Confirmation (read): Start")
+                self._run_started()
+                return wait
+            return None  # never Cancel here
+        if self.need_agenda():
+            if "myagendas" in keys and any(k == "loadlist" for k in keys):
+                return self.load_agenda()
+            if any(k in ("junioryear", "classicyear", "senioryear") for k in keys) and word("myagendas"):
+                return self._press_word(frame, word("myagendas"), "Agenda (read): opening My Agendas")
+        return None
 
     def veterans_free(self):
         v = self.cfg["training"].get("veterans_free", -1)
@@ -571,6 +757,7 @@ class Bot:
                     lm = Match(round(frame.rect[0] + x + bw / 2), round(frame.rect[1] + y + bh / 2),
                                round(max(bw, 30)), round(max(bh, 12)), 1.0)
             if lm:
+                self.agenda_loaded = True
                 return self._click_match(lm, f"loading the agenda '{agenda}'")
             if scrolls == 0:
                 log.info(f"looking for the agenda '{agenda}' in My Agendas")

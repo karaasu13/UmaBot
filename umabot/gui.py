@@ -71,6 +71,10 @@ HELP = """
 - Focus: Balanced, Stamina or Sprint (Sprint by default).
 - Agenda: the name of your saved agenda, as it is in the game. UmaBot reads the names in My Agendas
   and loads it before every run (case and spaces don't matter).
+- Event Boost (TP x2): during events, UmaBot ticks "Event Boost (TP Usage x2)" before starting. Runs then
+  cost twice the TP (fewer runs a day, more event rewards). Untick it to keep runs at the normal cost.
+- Out of TP: UmaBot reads the TP and waits as long as needed. With the Discord bot set up it first asks
+  whether it may use 1 Toughness 30 (answer yes, no or always). It never uses carats.
 - Free veteran spaces: count them in the game. UmaBot counts down every run, warns at 5 and stops at 0.
 - Plays from / to: the hours it may start runs. They shift a little every day and there are a few breaks.
 
@@ -386,9 +390,16 @@ class App(ctk.CTk):
         self.agenda_teach.grid(row=0, column=1, sticky="w", padx=(6, 0))
         vet = ctk.CTkFrame(row2, fg_color="transparent")
         vet.grid(row=0, column=4, sticky="e")
-        self._label(vet, "Free veteran spaces", self.f_body, 14).grid(row=0, column=0, padx=(0, 8))
+        self.boost_var = ctk.BooleanVar(value=bool(self.cfg["training"].get("event_boost", True)))
+        self._cb_boost = ctk.CTkCheckBox(vet, text="Event Boost (TP x2)", variable=self.boost_var,
+                                         command=self._boost_changed, font=self.font(self.f_body, 13),
+                                         text_color=INK, fg_color=SOLID, hover_color=SOLID, checkmark_color=ON_SOLID,
+                                         border_color=LINE, border_width=2, checkbox_width=18, checkbox_height=18,
+                                         corner_radius=4)
+        self._cb_boost.grid(row=0, column=0, padx=(0, 22))
+        self._label(vet, "Free veteran spaces", self.f_body, 14).grid(row=0, column=1, padx=(0, 8))
         self.vet_entry = self._entry(vet, width=56, height=32, justify="center", placeholder_text="–")
-        self.vet_entry.grid(row=0, column=1)
+        self.vet_entry.grid(row=0, column=2)
         free = self.cfg["training"].get("veterans_free", -1)
         if isinstance(free, int) and free >= 0:
             self.vet_entry.insert(0, str(free))
@@ -503,8 +514,16 @@ class App(ctk.CTk):
             self.agenda_msg.configure(text="Set your farming agenda: without one the runs farm far fewer fans.",
                                       text_color=GOLD)
         else:
-            self.agenda_msg.configure(text="Loaded from My Agendas before every run. Same name as in the game.",
+            self.agenda_msg.configure(text="Loaded from My Agendas before every run.",
                                       text_color=TURF)
+
+    def _boost_changed(self):
+        on = bool(self.boost_var.get())
+        config.save_settings(self.base, {"training": {"event_boost": on}})
+        self.cfg = config.load(self.cfg_path)
+        if self.bot:
+            self.bot.cfg["training"]["event_boost"] = on
+        log.info("Event Boost on: runs cost twice the TP during events" if on else "Event Boost off")
 
     def _veterans_changed(self):
         text = self.vet_entry.get().strip()

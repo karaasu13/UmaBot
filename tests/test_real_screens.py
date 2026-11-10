@@ -35,6 +35,8 @@ START = {
     "s15_trainee_condor": "Choose the trainee",
     "s16_recover_tp": "close",
     "s17_tp_not_enough": "no",  # never Restore
+    "s18_final_event_boost": "event_boost_off",  # ticked before Start (option on by default)
+    "s19_recover_tp_event": "close",
 }
 END = {
     "10_training_log": "ok",
@@ -184,9 +186,12 @@ def test_training_focus_follows_the_setting(base):
 def test_loads_the_saved_agenda_once_per_run(base):
     teach(base, "farmoguri")
     bot, vision, mouse = bot_on(base, "s11_final_independent", agenda="farmoguri")
-    assert target_of(bot, vision)[1] == "agenda_edit"
-    bot.execute(*target_of(bot, vision), vision.capture())
-    assert target_of(bot, vision)[1] == "it_start"  # opened once this run: don't loop
+    for _ in range(3):  # back on Final Confirmation without the agenda: it opens it again, 3 times at most
+        assert target_of(bot, vision)[1] == "agenda_edit"
+        bot.execute(*target_of(bot, vision), vision.capture())
+    assert target_of(bot, vision)[0] is None  # and never starts a run without it
+    bot.agenda_loaded = True
+    assert target_of(bot, vision)[1] == "it_start"
 
     bot, vision, mouse = bot_on(base, "s12_agenda_empty", agenda="farmoguri")
     assert target_of(bot, vision)[1] == "my_agendas_button"
@@ -320,3 +325,91 @@ def test_reading_real_screens_picks_the_right_button(reader, screen, label):
     from umabot.reader import decide
     choice = decide(reader.read(cv2.imread(os.path.join(SCREENS, screen + ".png"))))
     assert (choice[0] if choice else None) == label
+
+
+# ---------------------------------------------------------------- event, TP and Toughness (real screens, real reading)
+@pytest.fixture()
+def ocr():
+    pytest.importorskip("rapidocr_onnxruntime")
+
+
+def test_event_boost_is_ticked(base, ocr):
+    bot, vision, mouse = bot_on(base, "s18_final_event_boost", agenda="farmoguri")
+    rule, target = target_of(bot, vision)
+    assert rule.name == "Open the agenda"  # the agenda first
+    bot.agenda_loaded = True
+    rule, target = target_of(bot, vision)
+    assert rule.name == "Event Boost"
+    bot.execute(rule, target, vision.capture())
+    x, y = mouse.clicks[0]
+    assert 168 < x < 300 and 458 < y < 480  # the box left of "Event Boost (TP Usage x2)"
+    rule, target = target_of(bot, vision)
+    assert target == "it_start"  # once per run, then Start
+
+
+def test_final_confirmation_by_its_words_when_no_picture_matches(base, ocr):
+    bot, vision, mouse = bot_on(base, "s18_final_event_boost", agenda="farmoguri")
+    frame = vision.capture()
+    words = bot.recovery.reader.read(frame.raw)
+    from umabot.reader import decide
+    assert decide(words) is None  # never Cancel here
+    assert bot.by_text(frame, words, can_start=True) is not None
+    assert abs(mouse.clicks[-1][0] - 450) < 40 and abs(mouse.clicks[-1][1] - 299) < 15  # Edit
+    bot.agenda_loaded = True
+    bot.by_text(frame, words, can_start=True)  # the Event Boost
+    assert abs(mouse.clicks[-1][1] - 468) < 15
+    assert bot.by_text(frame, words, can_start=False) is None  # off hours: nothing (and no Cancel)
+    bot.by_text(frame, words, can_start=True)
+    assert abs(mouse.clicks[-1][1] - 574) < 15 and mouse.clicks[-1][0] > 330 and bot.runs_today == 1  # Start!
+
+
+class Remote:
+    """What the bot uses of the Discord bot, for these tests."""
+    def __init__(self):
+        from umabot.remote import Remote as Real
+        self.real = Real(discord=None)
+        self.posts = []
+        self.real.say = lambda text, image=None: self.posts.append((text, image))
+
+
+def test_out_of_tp_asks_for_a_toughness_and_uses_it_when_allowed(base, ocr):
+    r = Remote()
+    bot, vision, mouse = bot_on(base, "s17_tp_not_enough")
+    bot.remote = r.real
+    rule, target = target_of(bot, vision)
+    assert bot.execute(rule, target, vision.capture()) == 15 and mouse.clicks == []  # waits for the answer
+    assert "Toughness" in r.posts[0][0] and "9 more" in r.posts[0][0] and r.posts[0][1][:4] == b"\x89PNG"
+    r.real.commands.put("sim")
+    r.real.handle(bot, bot.now())
+    bot.execute(rule, target, vision.capture())
+    assert mouse.clicks[-1][0] > 330  # Restore (right), allowed
+    # the Recover TP list: Use on the Toughness 30 row, never the carats
+    bot2, vision2, mouse2 = bot_on(base, "s19_recover_tp_event")
+    bot2.remote, bot2.tp_approval = r.real, bot.tp_approval
+    rule, target = target_of(bot2, vision2)
+    bot2.execute(rule, target, vision2.capture())
+    x, y = mouse2.clicks[-1]
+    assert 420 < x < 460 and 145 < y < 170  # "Use" of Toughness 30 (the carats' Use is above it)
+    from umabot.reader import Word, decide_approved
+    confirm = [Word("Use Toughness 30?", (0, 0, 200, 20)), Word("Cancel", (0, 90, 60, 20)), Word("OK", (200, 90, 40, 20))]
+    assert decide_approved(confirm, "toughness")[0] == "OK"
+    assert decide_approved([Word("Carats", (0, 0, 60, 20)), Word("Toughness", (0, 30, 60, 20)),
+                            Word("Use", (0, 90, 40, 20))], "toughness") is None
+
+
+def test_out_of_tp_without_an_answer_says_no_and_waits_what_the_game_says(base, ocr, monkeypatch):
+    sent = []
+    monkeypatch.setattr("umabot.engine.notify", lambda hook, msg, image=None: sent.append((msg, image)))
+    bot, vision, mouse = bot_on(base, "s17_tp_not_enough")  # no Discord bot: no question
+    rule, target = target_of(bot, vision)
+    wait = bot.execute(rule, target, vision.capture())
+    assert mouse.clicks[-1][0] < 320  # No
+    assert 90 * 60 < wait < 100 * 60  # 9 TP missing x 10 min
+    assert sent and "waiting until" in sent[-1][0] and sent[-1][1][:4] == b"\x89PNG"
+
+
+def test_out_of_tp_is_checked_on_screen_before_waiting(base, ocr, monkeypatch):
+    sent = []
+    monkeypatch.setattr("umabot.engine.notify", lambda hook, msg, image=None: sent.append(msg))
+    bot, vision, mouse = bot_on(base, "s01_home")  # TP 100/100 on screen
+    assert bot._tp_guess() == 2.0 and "Start career" in bot.blocked and "100 TP" in sent[-1]
