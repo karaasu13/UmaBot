@@ -680,3 +680,16 @@ def test_discord_commands(world):
     say(d, remote, "stop")
     assert bot.step() is None and bot.status == "Stopped from Discord"
     assert not any("didn't get" in p[0] for p in d.posts)
+
+
+def test_agenda_names_tolerate_one_misread_letter_but_never_a_similar_agenda():
+    from umabot.engine import find_agenda_by_name
+    words = [Word("MileMed +A", (160, 218, 58, 14)), Word("Load List", (409, 280, 45, 14)),
+             Word("MileMed", (162, 326, 40, 12)), Word("Load List", (408, 387, 46, 15)),
+             Word("farmogurl", (160, 430, 46, 14)), Word("Load List", (408, 494, 46, 14))]
+    k = 0.5759
+    assert find_agenda_by_name(words, "MileMed+A", k).box[1] == 280
+    assert find_agenda_by_name(words, "milemed", k).box[1] == 387
+    assert find_agenda_by_name(words, "farmoguri", k).box[1] == 494  # "farmogurl": one letter misread
+    assert find_agenda_by_name(words, "MileMedA2", k) is None
+    assert find_agenda_by_name(words, "SprintMed", k) is None

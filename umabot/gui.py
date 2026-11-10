@@ -69,9 +69,8 @@ HELP = """
 - Support card: paste its GameTora link or ID (Light Hello SSR is 30052) and press Use card.
 - Trains: your trainee, and another one in case the first isn't available.
 - Focus: Balanced, Stamina or Sprint (Sprint by default).
-- Agenda: the exact name of your saved agenda. If UmaBot doesn't know it yet, open My Agendas in the game
-  and press "Show it to UmaBot", then drag a box around the agenda (its name and race pictures) and Save.
-  UmaBot checks the box right away. To redo it later, press "Show it again".
+- Agenda: the name of your saved agenda, as it is in the game. UmaBot reads the names in My Agendas
+  and loads it before every run (case and spaces don't matter).
 - Free veteran spaces: count them in the game. UmaBot counts down every run, warns at 5 and stops at 0.
 - Plays from / to: the hours it may start runs. They shift a little every day and there are a few breaks.
 
@@ -499,19 +498,13 @@ class App(ctk.CTk):
 
     def _refresh_agenda(self):
         name = self.cfg["training"].get("agenda", "")
-        known = tools.agenda_known(self.base, name)
+        self.agenda_teach.grid_remove()  # UmaBot reads the names now; showing it a picture isn't needed
         if not name:
             self.agenda_msg.configure(text="Set your farming agenda: without one the runs farm far fewer fans.",
                                       text_color=GOLD)
-            self.agenda_teach.grid_remove()
-        elif known:
-            self.agenda_msg.configure(text="Loaded from My Agendas before every run.", text_color=TURF)
-            self.agenda_teach.configure(text="Show it again")
-            self.agenda_teach.grid()
         else:
-            self.agenda_msg.configure(text="New agenda: open My Agendas in the game, then", text_color=GOLD)
-            self.agenda_teach.configure(text="Show it to UmaBot")
-            self.agenda_teach.grid()
+            self.agenda_msg.configure(text="Loaded from My Agendas before every run. Same name as in the game.",
+                                      text_color=TURF)
 
     def _veterans_changed(self):
         text = self.vet_entry.get().strip()

@@ -19,7 +19,7 @@ from .logger import log, notify, send_discord
 from .reader import Reader
 from .recovery import Recovery
 from .schedule import Schedule
-from .vision import Vision
+from .vision import Match, Vision
 
 ACTIONS = {"click", "stop", "card", "wait_tp", "center", "trainee", "agenda"}
 
@@ -130,6 +130,46 @@ def find_agenda(vision, frame, name_tpl, block_tpl):
     return best[1] if best else None
 
 
+def agenda_key(name):
+    """How agenda names are compared: case and spaces don't matter ("MileMed +A" = "milemed+a")."""
+    return re.sub(r"\s+", "", (name or "").lower())
+
+
+def find_agenda_by_name(words, name, k):
+    """The Load List under the agenda called `name`, from the words read on My Agendas (or None).
+    k: screen px per reference px. Each agenda's name sits above its races; its Load List is lower right."""
+    want = agenda_key(name)
+    if not want:
+        return None
+    loads = [w for w in words if agenda_key(w.text) in ("loadlist", "load")]
+
+    def load_under(w):
+        x, y = w.box[0], w.box[1]
+        below = [lw for lw in loads if 40 * k < lw.box[1] - y < 190 * k and lw.box[0] > x]
+        return min(below, key=lambda lw: lw.box[1]) if below else None
+
+    candidates = [(w, load_under(w)) for w in words]
+    candidates = [(w, lw) for w, lw in candidates if lw is not None]
+    exact = [lw for w, lw in candidates if agenda_key(w.text) == want]
+    if exact:
+        return exact[0]
+    # one letter misread ("farmogurl"): one letter off at most, and no other agenda that close
+    if len(want) < 5:
+        return None
+    close = [lw for w, lw in candidates if edit_distance(agenda_key(w.text), want) <= 1]
+    return close[0] if len(close) == 1 else None
+
+
+def edit_distance(a, b):
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
 def rule_options(cfg):
     """Values the rules can refer to: {focus} in template names, and only_if switches."""
     t = cfg["training"]
@@ -158,8 +198,6 @@ def prepare_rules(rules, has, card_templates, subs=None, flags=None):
             out.append(r)
             continue
         required = list(r.if_seen) + ([r.click] if r.click else [])
-        if r.action == "agenda":
-            required.append(f"agenda_{subs.get('agenda', '')}")
         r.missing = [t for t in required + r.any_of + r.if_not_seen if not has(t)]
         had_any_of = bool(r.any_of)
         r.any_of = [t for t in r.any_of if has(t)]
@@ -503,15 +541,18 @@ class Bot:
         return self._click_match(m, "next") if m else 1
 
     def load_agenda(self, marker=None):
-        """My Agendas: find the saved agenda (by its name and its races), scrolling down the list and back up
-        if needed, and press its Load List. Without it no run starts: a run without it farms far fewer fans."""
+        """My Agendas: find the saved agenda by its name (read on screen; or by its picture, if it was shown to
+        UmaBot), scrolling down the list and back up if needed, and press its Load List. Without it no run starts:
+        a run without it farms far fewer fans."""
         agenda = self.cfg["training"].get("agenda")
         slug = agenda_slug(agenda)
         block_tpl = self.vision.templates.get(f"agenda_{slug}")
         name_tpl = read_gray(agenda_name_path(self.cfg["_base"], slug))
-        if block_tpl is None or name_tpl is None:
-            return self._agenda_stop(f"UmaBot doesn't know the agenda '{agenda}' well enough yet. Open My Agendas "
-                                     "in the game and press 'Show it to UmaBot' in UmaBot, then Start again.")
+        by_picture = block_tpl is not None and name_tpl is not None
+        reader = self.recovery.reader
+        if not by_picture and not reader.available:
+            return self._agenda_stop("UmaBot can't read the screen on this PC, so it can't find the agenda. "
+                                     "See logs/umabot.log for why.")
         direction, turned, scrolls = -1, False, 0
         while scrolls < 60:
             if self.should_stop():
@@ -519,7 +560,13 @@ class Bot:
             frame = self.vision.capture()
             if frame is None:
                 return 2
-            lm = find_agenda(self.vision, frame, name_tpl, block_tpl)
+            lm = find_agenda(self.vision, frame, name_tpl, block_tpl) if by_picture else None
+            if lm is None:
+                w = find_agenda_by_name(reader.read(frame.raw), agenda, frame.k)
+                if w is not None:
+                    x, y, bw, bh = w.box
+                    lm = Match(round(frame.rect[0] + x + bw / 2), round(frame.rect[1] + y + bh / 2),
+                               round(max(bw, 30)), round(max(bh, 12)), 1.0)
             if lm:
                 return self._click_match(lm, f"loading the agenda '{agenda}'")
             if scrolls == 0:
@@ -535,7 +582,7 @@ class Bot:
                     break
                 direction, turned = -direction, True  # end of the list: look the other way
         return self._agenda_stop(f"Couldn't find the agenda '{agenda}' in My Agendas, so no run was started. Check "
-                                 "the name, or open My Agendas in the game and press 'Show it again' in UmaBot.")
+                                 "that the name in UmaBot is the same as in the game.")
 
     def _agenda_stop(self, msg):
         self.set_status("Stopped: agenda not found", "error")

@@ -199,9 +199,25 @@ def test_loads_the_saved_agenda_once_per_run(base):
 
 
 def test_unknown_agenda_name_is_reported_not_guessed(base):
-    bot, vision, _ = bot_on(base, "s13_my_agendas", agenda="does not exist")
-    rule = next(r for r in bot.rules if r.name == "Load the saved agenda")
-    assert not rule.enabled and "agenda_does_not_exist" in rule.missing
+    pytest.importorskip("rapidocr_onnxruntime")
+    bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda="does not exist")
+    assert bot.load_agenda() is None and mouse.clicks == []
+    assert len(mouse.scrolls) == 2 and "same as in the game" in bot.notices[-1]
+
+
+@pytest.mark.parametrize("screen,typed,load_y", [
+    ("agendas/farmoguri", "farmoguri", 286), ("agendas/farmoguri", "seiunsolv", 393),
+    ("agendas/farmoguri", "LongAhh", 500), ("agendas/milemed", "MileMed+A", 287),
+    ("agendas/milemed", "milemed", 394), ("agendas/milemed", "Sprint Med", 501),
+    ("s13_my_agendas", "farmoguri", 368), ("s13_my_agendas", "seiunsolv", 475),
+])
+def test_agenda_is_found_by_its_name_without_showing_it(base, screen, typed, load_y):
+    # UmaBot reads the names in My Agendas: typing the name is enough (case and spaces don't matter),
+    # and "MileMed" is never mistaken for "MileMed +A"
+    pytest.importorskip("rapidocr_onnxruntime")
+    bot, vision, mouse = bot_on(base, screen, agenda=typed)
+    bot.load_agenda()
+    assert len(mouse.clicks) == 1 and abs(mouse.clicks[0][1] - load_y) < 8
 
 
 def test_every_screen_is_covered():
@@ -220,11 +236,12 @@ def test_agenda_not_in_the_list_stops_instead_of_running_without_it(base):
     assert bot.status == "Stopped: agenda not found" and mouse.clicks == []
 
 
-def test_agenda_shown_before_this_version_must_be_shown_again(base):
+def test_an_old_picture_of_the_agenda_doesnt_get_in_the_way(base):
+    pytest.importorskip("rapidocr_onnxruntime")
     cv2.imwrite(os.path.join(base, "templates", "agenda_farmoguri.png"), np.full((60, 200, 3), 128, np.uint8))
     bot, vision, mouse = bot_on(base, "s13_my_agendas", agenda="farmoguri")
-    assert bot.load_agenda() is None and mouse.clicks == [] and "Show it to UmaBot" in bot.notices[-1]
-    assert not tools.agenda_known(base, "farmoguri")
+    bot.load_agenda()
+    assert len(mouse.clicks) == 1 and abs(mouse.clicks[0][1] - 368) < 8
 
 
 def test_agenda_crops_never_set_the_ui_scale(base):
