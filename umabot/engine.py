@@ -472,9 +472,12 @@ class Bot:
             self.done_this_run = set()
             self._use_veteran_slot()
             log.info(f"run #{self.runs_today} of the day started")
-            if self.webhook() and self.cfg["safety"].get("discord_each_run"):
+            if self.cfg["safety"].get("discord_each_run"):
                 text = f"UmaBot: run #{self.runs_today} of the day started."
-                threading.Thread(target=send_discord, args=(self.webhook(), text), daemon=True).start()
+                if self.webhook():
+                    threading.Thread(target=send_discord, args=(self.webhook(), text), daemon=True).start()
+                elif self.remote is not None:  # only the Discord bot is set up: it sends it
+                    threading.Thread(target=self.remote.say, args=(text,), daemon=True).start()
         if r.checks_tp and self._looks_out_of_tp():
             r = Rule(name=r.name, if_seen=r.if_seen, action="wait_tp")
             log.info(f"'{r.name}' was pressed {self.cfg['tp']['guess_after']} times without a run starting: "

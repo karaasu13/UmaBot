@@ -607,7 +607,8 @@ class App(ctk.CTk):
         toggle = self._link(win, "Answer UmaBot from Discord too (optional)", lambda: show_remote(), size=13)
         toggle.pack(anchor="w", padx=28, pady=(16, 0))
         self._label(remote_box, "When it's really stuck, UmaBot posts the screen with its words numbered. Answer "
-                    "with a number (3), a cell (C4), restart or wait, and it remembers what you pressed.",
+                    "with a number (3), a cell (C4), restart or wait, and it remembers what you pressed. "
+                    "The bot sends the alerts too: with it, leave the webhook above empty.",
                     self.f_body, 13, INK_SOFT, justify="left", wraplength=520, anchor="w").pack(anchor="w")
         rsteps = ("1. discord.com/developers/applications > New Application > Bot.\n"
                   "2. Reset Token and copy it. Turn on Message Content Intent.\n"

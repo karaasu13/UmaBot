@@ -693,3 +693,17 @@ def test_agenda_names_tolerate_one_misread_letter_but_never_a_similar_agenda():
     assert find_agenda_by_name(words, "farmoguri", k).box[1] == 494  # "farmogurl": one letter misread
     assert find_agenda_by_name(words, "MileMedA2", k) is None
     assert find_agenda_by_name(words, "SprintMed", k) is None
+
+
+def test_with_only_the_discord_bot_every_message_goes_through_it(world, monkeypatch):
+    from umabot import logger
+    bot, clock, d, remote, game = remote_world(world, [])
+    bot.cfg["safety"]["discord_each_run"] = True
+    monkeypatch.setattr(logger, "SINKS", [remote.say])
+    logger.notify("", "veterans list full")  # alerts: no webhook, so through the bot
+    from umabot.engine import Rule
+    bot.execute(Rule(name="start", if_seen=["next"], counts_run=True), "next", bot.vision.capture())
+    from umabot.remote import wait_for
+    assert wait_for(lambda: len(d.posts) >= 2)
+    texts = [p[0] for p in d.posts]
+    assert any("veterans" in t for t in texts) and any("run #1" in t for t in texts)
