@@ -132,6 +132,7 @@ class Recovery:
         self.pressed = [(t, lb) for t, lb in self.pressed if now - t < timedelta(minutes=10)] + [(now, label)]
         if sum(1 for _, lb in self.pressed if lb == label) > 4:
             self.banned[label] = now + timedelta(minutes=20)
+            self.bot.stats.alert()
             self.pressed = [(t, lb) for t, lb in self.pressed if lb != label]
             notify(self.bot.webhook(), f"I pressed '{word.text}' over and over without getting anywhere, so I stopped "
                                        "pressing it.", image=png(frame.raw))
@@ -197,6 +198,7 @@ class Recovery:
             return None
         if not self.alerted:
             self.alerted = True
+            self.bot.stats.alert()
             path = self.keep(frame, "stuck") or ""
             self.bot.set_status("Stuck on a screen it doesn't know", "error")
             msg = ("I'm stuck on a screen I don't know and couldn't get past it. I'll keep trying"

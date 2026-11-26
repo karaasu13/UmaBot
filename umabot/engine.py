@@ -20,6 +20,7 @@ from .flows import held, need_tp, row_button, spend_tp, tp_now
 from .reader import Reader
 from .recovery import Recovery, png
 from .schedule import Schedule
+from .stats import Stats, fans_gained
 from .vision import Match, Vision
 
 ACTIONS = {"click", "stop", "card", "wait_tp", "center", "trainee", "agenda", "boost"}
@@ -40,6 +41,7 @@ class Rule:
     only_if: str | None = None   # only used when this option is on (see rule_options)
     notify: str | None = None    # message shown in the app (and Discord) when it fires
     optional: bool = False       # rare screen: not counted as missing while its picture isn't there
+    verify: list = field(default_factory=list)  # words that must be on the button before pressing it
     enabled: bool = True
     unused: bool = False         # switched off by an option, not missing anything
     missing: list = field(default_factory=list)
@@ -240,6 +242,8 @@ class Bot:
                                  game or Game(self.vision, cfg["safety"].get("steam_app_id", STEAM_APP_ID)))
         self.remote = remote  # Discord commands (optional)
         self.rules += self._learned_rules()
+        self.stats = Stats(cfg["_base"], now)
+        self.fans_read = False     # this run's fans, read on the rewards screen
         self.card_pause_until, self.card_failures = None, 0
         self.prev_state, self.no_window = None, False
         self.status, self.status_kind = "Starting", "ok"  # kind: ok | wait | stop | error
@@ -275,6 +279,31 @@ class Bot:
 
     # ------------------------------------------------------------ decision
     AGENDA_RULES = ("Open the agenda", "Open My Agendas", "Load the saved agenda")
+
+    def reload(self):
+        """After a setting changed (from Discord): rules, options and schedule built again."""
+        self.rules = prepare_rules(self.cfg["rule"], self.vision.has, self.cfg["card"]["templates"],
+                                   *rule_options(self.cfg)) + self._learned_rules()
+        self.schedule = Schedule(self.cfg["schedule"])
+
+    def text_at(self, frame, m, keys):
+        """Is one of these words on the button the picture matched? True if the screen can't be read at all."""
+        reader = self.recovery.reader
+        if not getattr(reader, "available", True):
+            return True
+        H, W = frame.raw.shape[:2]
+        k = frame.rect[2] / W
+        cx, cy = (m.x - frame.rect[0]) / k, (m.y - frame.rect[1]) / k
+        hw, hh = m.w / k * 0.8 + 20, m.h / k * 0.8 + 14
+        x0, y0, x1, y1 = int(max(0, cx - hw)), int(max(0, cy - hh)), int(min(W, cx + hw)), int(min(H, cy + hh))
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return False
+        crop = frame.raw[y0:y1, x0:x1]
+        if crop.shape[0] < 48:  # tiny crops read badly: enlarge
+            f = 48 / crop.shape[0]
+            crop = cv2.resize(crop, None, fx=f, fy=f, interpolation=cv2.INTER_CUBIC)
+        found = " ".join(w.key for w in reader.read(crop))
+        return any(key in found for key in keys)
 
     def need_agenda(self):
         return rule_options(self.cfg)[1]["load_agenda"] and not self.agenda_loaded
@@ -336,6 +365,8 @@ class Bot:
         if state != self.prev_state:
             text = {"active": "Playing", "break": "On a break", "off": "Off hours"}[state]
             log.info(text + (f" until {until:%H:%M}" if until else ""))
+            if state == "off" and self.prev_state in ("active", "break"):
+                notify(self.webhook(), "Done for today.\n" + self.stats.summary(cost=self.run_cost()))
             self.prev_state = state
         if state == "break":
             self.set_status(f"On a break until {until:%H:%M}", "wait")
@@ -380,6 +411,13 @@ class Bot:
             return between(self.rng, self.cfg["human"]["poll_s"])
         self.recovery.known_screen()
 
+        if r.verify and target:
+            m = frame.find(target)
+            if m is not None and not self.text_at(frame, m, r.verify):
+                # the picture matched, but not on that button (an event changed the screen?): don't press it
+                log.info(f"'{r.name}': the picture matched but '{target}' isn't written there, not pressing it")
+                self.blocked[r.name] = now + timedelta(minutes=2)
+                return 1.0
         key = (r.name, target)
         self.repeats = self.repeats + 1 if key == self.last else 1
         self.last = key
@@ -398,19 +436,29 @@ class Bot:
     def _learned_path(self):
         return os.path.join(self.cfg["_base"], "learned.json")
 
+    GENERIC = re.compile(r"^(cancel|ok|close|back|no|yes|next|confirm|skip|start|home|[a-h][1-6])$")
+
     def _learned_rules(self):
         try:
             with open(self._learned_path(), encoding="utf-8") as f:
                 items = json.load(f)
         except (OSError, ValueError):
             return []
-        rules = [{"name": f"Learned: {it['label']}", "if_seen": [it["template"]], "click": it["template"]}
-                 for it in items if isinstance(it, dict) and it.get("template")]
+        rules = []
+        for it in items:
+            if not isinstance(it, dict) or not it.get("template"):
+                continue
+            ctx = it.get("context")
+            if not ctx and self.GENERIC.match(re.sub(r"[^a-z0-9]", "", it.get("label", "").lower())):
+                continue  # learned by an older version without its screen: a lone Cancel could fire anywhere
+            rules.append({"name": f"Learned: {it['label']}", "if_seen": ([ctx] if ctx else []) + [it["template"]],
+                          "click": it["template"]})
         return prepare_rules(rules, self.vision.has, self.cfg["card"]["templates"], *rule_options(self.cfg))
 
     def learn(self, frame, x, y, label, words=()):
-        """Remembers a press made from Discord: the area around (x, y) (real px from the window's corner) becomes
-        a picture that gets pressed the next time it's seen. Never for anything about spending or quitting."""
+        """Remembers a press made from Discord: the area around (x, y) (real px from the window's corner) becomes a
+        picture pressed the next time it's seen, together with the screen's title (so a Cancel learned on one screen
+        is never pressed on another). Never for anything about spending or quitting."""
         from .reader import DANGER_BUTTONS, DANGER_IN_TEXT
         rx, ry = x / frame.k, y / frame.k
         H, W = frame.img.shape[:2]
@@ -420,25 +468,45 @@ class Bot:
         if any(DANGER_BUTTONS.match(w.key) or any(d in w.key for d in DANGER_IN_TEXT) for w in near) or \
                 DANGER_BUTTONS.match(label.lower()) or x1 - x0 < 40 or y1 - y0 < 30:
             return False
+        # the screen's title: the highest word of a few letters, away from what was pressed
+        titles = [w for w in words if len(w.key) >= 4 and abs(w.center[1] - y) > 60
+                  and not any(d in w.key for d in DANGER_IN_TEXT)]
+        title = min(titles, key=lambda w: w.box[1]) if titles else None
+        generic = self.GENERIC.match(re.sub(r"[^a-z0-9]", "", label.lower()))
+        if title is None and generic:
+            return False  # a Cancel or a grid cell without its screen would be pressed anywhere
         try:
             with open(self._learned_path(), encoding="utf-8") as f:
                 items = json.load(f)
         except (OSError, ValueError):
             items = []
         name = f"learned_{len(items) + 1}"
+        folder = os.path.join(self.cfg["_base"], "templates")
+        os.makedirs(folder, exist_ok=True)
         crop = frame.img[y0:y1, x0:x1].copy()
         ok, buf = cv2.imencode(".png", crop)
         if not ok:
             return False
-        os.makedirs(os.path.join(self.cfg["_base"], "templates"), exist_ok=True)
-        buf.tofile(os.path.join(self.cfg["_base"], "templates", f"{name}.png"))
-        items.append({"template": name, "label": label})
+        buf.tofile(os.path.join(folder, f"{name}.png"))
+        self.vision.templates[name] = crop
+        item = {"template": name, "label": label}
+        if title is not None:
+            tx, ty, tw, th = (v / frame.k for v in title.box)
+            cx0, cy0 = int(max(0, tx - 10)), int(max(0, ty - 8))
+            cx1, cy1 = int(min(W, tx + tw + 10)), int(min(H, ty + th + 8))
+            ctx_crop = frame.img[cy0:cy1, cx0:cx1].copy()
+            ok, buf = cv2.imencode(".png", ctx_crop)
+            if ok and min(ctx_crop.shape[:2]) >= 12:
+                buf.tofile(os.path.join(folder, f"{name}_screen.png"))
+                self.vision.templates[f"{name}_screen"] = ctx_crop
+                item["context"], item["screen"] = f"{name}_screen", title.text
+            elif generic:
+                return False
+        items.append(item)
         with open(self._learned_path(), "w", encoding="utf-8") as f:
             json.dump(items, f, indent=2)
-        self.vision.templates[name] = crop
-        rule = {"name": f"Learned: {label}", "if_seen": [name], "click": name}
-        self.rules += prepare_rules([rule], self.vision.has, self.cfg["card"]["templates"], *rule_options(self.cfg))
-        log.info(f"learned from Discord: '{label}'")
+        self.reload()
+        log.info(f"learned from Discord: '{label}'" + (f" on '{item['screen']}'" if item.get("screen") else ""))
         return True
 
     def ask_for_help(self, frame, now):
@@ -458,6 +526,17 @@ class Bot:
             self.done_this_run.add(r.name)
         if r.name == "Open the agenda":
             self.agenda_tries += 1
+        if r.name.startswith("Generic") and not self.fans_read:
+            gained = fans_gained(self._read(frame))
+            if gained:
+                self.fans_read = True
+                self.stats.fans(gained)
+                log.info(f"this run: +{gained:,} fans")
+        if r.counts_run:
+            words = self._read(frame)
+            if spend_tp(words):
+                self.last_spend = spend_tp(words)
+            self.stats.saw_tp(tp_now(words))
         if r.notify:
             self.notices.append(r.notify)
             notify(self.webhook(), r.notify)
@@ -502,6 +581,8 @@ class Bot:
         self.tp_tries = []
         self.done_this_run = set()
         self.agenda_loaded, self.agenda_tries = False, 0
+        self.fans_read = False
+        self.stats.run(self.run_cost())
         self._use_veteran_slot()
         log.info(f"run #{self.runs_today} of the day started")
         if self.cfg["safety"].get("discord_each_run"):
@@ -539,6 +620,7 @@ class Bot:
         self._undo_run_count()
         now = self.now()
         words = self._read(frame)
+        self.stats.saw_toughness(held(words, r"toughness"))
         on_list = bool(frame.sees("tp_popup")) or bool(row_button(words, r"toughness", r"use")[1])
         if self.tp_approval and now < self.tp_approval[0]:
             if not self.tp_approval[1]:
@@ -582,6 +664,7 @@ class Bot:
             self._press_target(frame, "close", "closing Recover TP")
             return self._wait_for_tp(None, frame)
         self.tp_approval[1] = True
+        self.stats.used_toughness()
         log.info("using 1 Toughness 30 (allowed on Discord)")
         return self._press_word(frame, use, f"pressing Use on {row.text}")
 
@@ -610,6 +693,7 @@ class Bot:
         frame = self.vision.capture()
         words = self._read(frame)
         tp, cost = tp_now(words), self.run_cost()
+        self.stats.saw_tp(tp)
         if tp is not None and tp >= cost:
             name = "Start career"
             self.blocked[name] = self.now() + timedelta(minutes=10)
@@ -655,6 +739,8 @@ class Bot:
     def by_text(self, frame, words, can_start):
         """No picture matched: recognise the steps before a run by their words. Returns seconds or None."""
         keys = [w.key for w in words]
+        if "finalconfirmation" in keys:
+            self.stats.saw_tp(tp_now(words))
         word = lambda key: next((w for w in sorted(words, key=lambda w: -w.box[1]) if w.key == key), None)
         if "finalconfirmation" in keys:
             if self.need_agenda() and self.agenda_tries < 3 and word("edit"):

@@ -138,6 +138,7 @@ click = "focus_{focus}_off"
 name = "Open the agenda"
 if_seen = ["final_confirmation", "agenda_edit"]
 click = "agenda_edit"
+verify = ["edit"]          # pressed only if the word is really there (a picture can match the wrong spot)
 once_per_run = true
 only_if = "load_agenda"
 
@@ -145,6 +146,7 @@ only_if = "load_agenda"
 name = "Open My Agendas"
 if_seen = ["agenda_window", "my_agendas_button"]
 click = "my_agendas_button"
+verify = ["myagendas"]
 once_per_run = true
 only_if = "load_agenda"
 
@@ -166,9 +168,10 @@ only_if = "event_boost"
 optional = true
 
 [[rule]]
-name = "Start Independent Training (spends 30 TP)"
+name = "Start Independent Training"
 if_seen = ["final_confirmation", "it_start"]
 click = "it_start"
+verify = ["start"]
 starts_run = true
 counts_run = true
 

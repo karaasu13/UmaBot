@@ -82,8 +82,11 @@ HELP = """
 - Press "Discord alerts" at the top: paste a webhook of one of your channels (channel settings > Integrations
   > Webhooks > New Webhook > Copy Webhook URL), send a test and Save. UmaBot writes there when it stops or needs you.
 - Optional, "Answer UmaBot from Discord": with a Discord bot of your own (free, steps in that window), UmaBot posts
-  the screen with its words numbered when it's really stuck. Answer 3 (press word 3), C4 (a grid cell), restart,
-  wait, print, status, pause, start or stop. What you press is remembered for next time.
+  the screen with its words numbered when it's really stuck. Answer 3 (press word 3), C4 (a grid cell), restart
+  or wait. What you press is remembered for next time (with the screen it was on).
+  Other commands: today, runs, fans, spent, tp, print, status, log, pause, start, stop, agenda <name>,
+  focus <sprint|stamina|balanced>, boost on/off, hours 10:30-01:00, vets <n>. Write help to see them.
+  At the end of the day's hours it sends a summary (runs, fans, TP spent).
 
 # Screens UmaBot doesn't know (events, pop-ups, missions...)
 - It reads the words on screen and presses a safe button: Close, OK, Next, Skip, Collect All...

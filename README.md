@@ -86,6 +86,9 @@ The schedule's nightly pause doesn't cost runs: TP keeps refilling (a full bar t
   It never presses anything about carats, restoring TP or buying. Still stuck: a Discord message with the screenshot,
   then it restarts the game. With the optional Discord bot you can answer it (`3`, `C4`, `restart`, `wait`…), and it
   remembers what you pressed.
+- **Discord commands** (with the optional Discord bot): `today`, `runs`, `fans`, `spent`, `tp`, `print`, `status`,
+  `log`, `pause` / `start` / `stop`, `restart`, and settings from afar: `agenda <name>`, `focus sprint`, `boost on|off`,
+  `hours 10:30-01:00`, `vets <n>`. A summary of the day is sent when the day's hours end.
 
 ## ❓ FAQ
 

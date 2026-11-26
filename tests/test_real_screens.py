@@ -413,3 +413,33 @@ def test_out_of_tp_is_checked_on_screen_before_waiting(base, ocr, monkeypatch):
     monkeypatch.setattr("umabot.engine.notify", lambda hook, msg, image=None: sent.append(msg))
     bot, vision, mouse = bot_on(base, "s01_home")  # TP 100/100 on screen
     assert bot._tp_guess() == 2.0 and "Start career" in bot.blocked and "100 TP" in sent[-1]
+
+
+# ---------------------------------------------------------------- pressing only buttons that say what they should
+def test_important_buttons_are_checked_by_their_word(base, ocr):
+    bot, vision, mouse = bot_on(base, "s11_final_independent", agenda="farmoguri")
+    frame = vision.capture()
+    edit = frame.find("agenda_edit")
+    assert bot.text_at(frame, edit, ["edit"]) and not bot.text_at(frame, edit, ["myagendas"])
+    start = frame.find("it_start")
+    assert bot.text_at(frame, start, ["start"])
+    frame12 = screen_vision(base, "s12_agenda_empty").capture()
+    assert bot.text_at(frame12, frame12.find("my_agendas_button"), ["myagendas"])
+
+
+def test_a_picture_on_the_wrong_spot_is_not_pressed(base, ocr):
+    # e.g. the My Agendas picture matching a race of the calendar: its word isn't there, so no press
+    bot, vision, mouse = bot_on(base, "s11_final_independent", agenda="farmoguri")
+    bot.text_at = lambda frame, m, keys: False
+    assert bot.step() == 1.0 and mouse.clicks == [] and "Open the agenda" in bot.blocked
+
+
+def test_fans_are_read_on_the_rewards_screen(base, ocr):
+    from umabot.stats import fans_gained
+    bot, vision, mouse = bot_on(base, "18_rewards_fans")
+    assert fans_gained(bot.recovery.reader.read(vision.capture().raw)) == 1028385
+    rule, target = target_of(bot, vision)
+    bot.execute(rule, target, vision.capture())
+    bot.execute(rule, target, vision.capture())  # read once per run
+    d = bot.stats.today()
+    assert d["fans"] == 1028385 and d["fan_runs"] == 1

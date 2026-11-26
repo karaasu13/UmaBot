@@ -745,3 +745,80 @@ def test_a_moving_screen_that_goes_nowhere_is_reported_after_10_minutes(world, m
         alerts.append(bool(sent))
         clock["t"] += timedelta(minutes=1)
     assert not any(alerts[:9]) and alerts[-1] and game.restarts == 0
+
+
+# ---------------------------------------------------------------- learning with the screen, commands, stats
+def test_a_press_from_discord_is_remembered_with_its_screen_and_old_lone_cancels_are_dropped(world):
+    import json
+    import os
+    words = [Word("Race Scheduling", (800, 60, 300, 40)), Word("Cancel", (700, 950, 160, 50))]
+    bot, clock, d, remote, game = remote_world(world, words)
+    remote.ask(bot, bot.vision.capture(), clock["t"])
+    say(d, remote, "2")
+    bot.step()
+    item = json.load(open(os.path.join(bot.cfg["_base"], "learned.json")))[-1]
+    assert item["screen"] == "Race Scheduling" and item["context"] == "learned_1_screen"
+    rule = next(r for r in bot.rules if r.name == "Learned: Cancel")
+    assert rule.if_seen == ["learned_1_screen", "learned_1"]
+    # an entry from the older version (no screen) for a generic button is not used any more
+    json.dump([{"template": "learned_1", "label": "Cancel"}], open(os.path.join(bot.cfg["_base"], "learned.json"), "w"))
+    assert not bot._learned_rules()
+
+
+def test_a_lone_cancel_without_a_screen_title_is_not_remembered(world):
+    bot, clock, d, remote, game = remote_world(world, [Word("Cancel", (700, 950, 160, 50))])
+    remote.ask(bot, bot.vision.capture(), clock["t"])
+    say(d, remote, "1")
+    bot.step()
+    assert "next time" not in d.posts[-1][0]
+
+
+def test_commands_with_a_mention_and_a_warning_when_messages_come_empty(world):
+    bot, clock, d, remote, game = remote_world(world, [])
+    d.send("<@123456789012345678> help")
+    d.n += 1
+    d.inbox.append({"id": str(d.n), "content": "", "author": {"id": "me", "bot": False}})
+    remote.fetch()
+    bot.step()
+    texts = [p[0] for p in d.posts]
+    assert any("UmaBot commands" in t for t in texts) and any("Message Content Intent" in t for t in texts)
+
+
+def test_stats_commands(world):
+    bot, clock, d, remote, game = remote_world(world, [])
+    bot.cfg["training"]["event_boost"] = False  # 30 TP a run
+    bot.stats.saw_tp(75)
+    bot._run_started()
+    bot.stats.fans(1028385)
+    for cmd in ("today", "runs", "fans", "spent", "tp", "log"):
+        say(d, remote, cmd)
+    bot.step()
+    texts = "\n".join(p[0] for p in d.posts)
+    assert "1 run, 1 028 385 fans" in texts and "Runs today: 1" in texts
+    assert "Spent today: 30 TP on 1 runs, 0 Toughness 30, 0 carats" in texts
+    assert "TP: about 45/100" in texts and "Enough for 1 run" in texts
+    clock["t"] += timedelta(minutes=55)  # +1 TP every 10 min
+    assert "about 50/100" in bot.stats.tp_text(30)
+
+
+def test_settings_from_discord(world):
+    from umabot import config
+    bot, clock, d, remote, game = remote_world(world, [])
+    for cmd in ("agenda farmoguri", "focus stamina", "boost off", "hours 9:00-23:30", "vets 12", "focus fast"):
+        say(d, remote, cmd)
+    bot.step()
+    saved = config.load_settings(bot.cfg["_base"])
+    assert saved["training"] == {"agenda": "farmoguri", "focus": "stamina", "event_boost": False, "veterans_free": 12}
+    assert saved["schedule"]["start"] == "09:00" and saved["schedule"]["end"] == "23:30"
+    assert bot.cfg["training"]["focus"] == "stamina" and bot.schedule.cfg["start"] == "09:00"
+    assert "Focus can be" in d.posts[-1][0]
+
+
+def test_end_of_the_day_summary(world, monkeypatch):
+    sent = []
+    monkeypatch.setattr("umabot.engine.notify", lambda hook, msg, image=None: sent.append(msg))
+    bot, clock, reader, game = unknown_world(world, [])
+    bot.prev_state = "active"
+    bot.schedule.state = lambda now: ("off", now + timedelta(hours=9))
+    bot.step()
+    assert sent and "Done for today" in sent[-1] and "**Today**" in sent[-1]

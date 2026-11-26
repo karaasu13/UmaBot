@@ -24,8 +24,14 @@ from .logger import SINKS, log
 
 API = "https://discord.com/api/v10"
 COLS, ROWS = "ABCDEFGH", 6
-HELP = ("Answer with a word's number (e.g. `3`), a cell (e.g. `C4`), `restart`, `wait`, `print`, `status`, "
-        "`pause`, `start` or `stop`.")
+HELP = ("Answer with a word's number (e.g. `3`), a cell (e.g. `C4`), `restart`, `wait` or `print`. "
+        "`help` lists every command.")
+COMMANDS = """**UmaBot commands** (write them in this channel)
+`today` the day so far (runs, fans, TP spent, problems) · `runs` · `fans` · `spent` · `tp`
+`print` the screen now · `status` what it's doing · `log` its last lines
+`pause` / `start` · `stop` · `restart` the game · `wait` leave it alone 30 min
+`agenda <name>` · `focus sprint|stamina|balanced` · `boost on|off` · `hours 10:30-01:00` · `hours off` · `vets <n>`
+When it's stuck: a number from its screenshot (`3`) or a grid cell (`C4`). To its questions: `yes` / `no` / `always`."""
 YES, NO, ALWAYS = {"yes", "y", "sim", "s", "ok", "pode"}, {"no", "n", "nao", "não", "nope"}, {"always", "sempre"}
 
 
@@ -137,6 +143,7 @@ class Remote:
         self.question = None     # (key, when asked) of a yes/no question waiting for an answer
         self.answers = {}        # key -> "yes" | "no"
         self.always = set()      # keys answered "always" (until UmaBot is restarted)
+        self.empty_warned = False
         self._stop = threading.Event()
         self._thread = None
 
@@ -170,9 +177,15 @@ class Remote:
                 author = m.get("author", {})
                 if author.get("bot") or author.get("id") == self.me or m.get("webhook_id"):
                     continue
-                text = (m.get("content") or "").strip()
+                text = re.sub(r"<@[!&]?\d+>", "", m.get("content") or "").strip()  # "@UmaBot 36" works too
                 if text:
                     self.commands.put(text)
+                elif not m.get("content") and not m.get("attachments") and not self.empty_warned:
+                    # Discord sends the bot empty messages when "Message Content Intent" is off
+                    self.empty_warned = True
+                    self.say("I can't read your messages: on discord.com/developers/applications, open the app > "
+                             "Bot and turn on **Message Content Intent**, then Save. Until then, mention me: "
+                             "`@UmaBot 3`.")
         except Exception as e:
             log.info(f"(couldn't read Discord: {e})")
 
@@ -249,8 +262,39 @@ class Remote:
             self.say("Carrying on.")
             return 0.5
         if cmd == "status":
-            self.say(f"{bot.status}. Runs today: {bot.runs_today}.")
+            self.say(f"{bot.status}. Runs today: {bot.stats.today()['runs']}.")
             return None
+        if cmd in ("help", "commands", "ajuda", "?"):
+            self.say(COMMANDS)
+            return None
+        if cmd in ("today", "hoje", "summary"):
+            self.say(bot.stats.summary(bot.status, bot.run_cost()))
+            return None
+        if cmd == "runs":
+            d, st = bot.stats.today(), bot.stats
+            hours = max((bot.now() - st.started).total_seconds() / 3600, 1 / 60)
+            self.say(f"Runs today: {d['runs']}. Since UmaBot started ({st.started:%H:%M}): {st.session_runs}, "
+                     f"{st.session_runs / hours:.1f} an hour.")
+            return None
+        if cmd in ("fans", "fas", "fãs"):
+            d = bot.stats.today()
+            avg = d["fans"] // d["fan_runs"] if d["fan_runs"] else 0
+            self.say(f"Fans today: {d['fans']:,} in {d['fan_runs']} runs (last run {d['last_fans']:,}, "
+                     f"{avg:,} on average).".replace(",", " "))
+            return None
+        if cmd in ("spent", "gastos", "gasto"):
+            d = bot.stats.today()
+            self.say(f"Spent today: {d['tp_spent']} TP on {d['runs']} runs, {d['toughness']} Toughness 30, 0 carats.")
+            return None
+        if cmd == "tp":
+            self.say(bot.stats.tp_text(bot.run_cost(), bot.cfg["tp"].get("regen_min", 10)))
+            return None
+        if cmd == "log":
+            self.say(_log_tail(bot))
+            return None
+        m = re.fullmatch(r"(agenda|focus|boost|hours|vets)\s+(.+)", cmd)
+        if m:
+            return self._setting(bot, m.group(1), m.group(2).strip())
         if cmd == "wait":
             self.quiet_until = now + timedelta(minutes=30)
             self.say("OK, I'll leave it alone for 30 minutes (send `start` to carry on before).")
@@ -273,6 +317,45 @@ class Remote:
         if len(cmd) <= 20:
             self.say("I didn't get that. " + HELP)
         return None
+
+    def _setting(self, bot, what, value):
+        from . import config
+        base, cfg = bot.cfg["_base"], bot.cfg
+        if what == "agenda":
+            change, done = {"training": {"agenda": value}}, f"Agenda: {value} (from the next run)."
+        elif what == "focus":
+            if value not in ("sprint", "stamina", "balanced"):
+                self.say("Focus can be `sprint`, `stamina` or `balanced`.")
+                return None
+            change, done = {"training": {"focus": value}}, f"Focus: {value} (from the next run)."
+        elif what == "boost":
+            if value not in ("on", "off"):
+                self.say("Use `boost on` or `boost off`.")
+                return None
+            change, done = {"training": {"event_boost": value == "on"}}, f"Event Boost {value}."
+        elif what == "vets":
+            if not value.isdigit():
+                self.say("Use the number of free veteran spaces, e.g. `vets 12`.")
+                return None
+            change, done = {"training": {"veterans_free": int(value)}}, f"Free veteran spaces: {value}."
+        else:  # hours
+            if value == "off":
+                change, done = {"schedule": {"enabled": False}}, "Hours off: it plays at any time."
+            else:
+                t = re.fullmatch(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", value)
+                if not t or int(t.group(1)) > 23 or int(t.group(3)) > 23 or int(t.group(2)) > 59 \
+                        or int(t.group(4)) > 59:
+                    self.say("Use hours like `hours 10:30-01:00` (or `hours off`).")
+                    return None
+                start, end = f"{int(t.group(1)):02d}:{t.group(2)}", f"{int(t.group(3)):02d}:{t.group(4)}"
+                change = {"schedule": {"enabled": True, "start": start, "end": end}}
+                done = f"Hours: {start} to {end}, with a few breaks."
+        config.save_settings(base, change)
+        for section, values in change.items():
+            cfg[section].update(values)
+        bot.reload()
+        self.say(done + " (UmaBot's window shows it after a restart.)")
+        return 0.5
 
     def _press(self, bot, cmd, now):
         if self.asked is None:
@@ -307,6 +390,18 @@ class Remote:
         self.say(f"Pressed {label}." + (" I'll do it alone next time." if learned else ""))
         bot.recovery.known_screen()
         return 2.0
+
+
+def _log_tail(bot, lines=15):
+    path = os.path.join(bot.logs_dir, "umabot.log")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            tail = f.readlines()[-lines:]
+    except OSError:
+        return "There's no log yet."
+    fence = "`" * 3
+    text = "".join(tail)[-1900:].replace(fence, "'" * 3)
+    return fence + "\n" + text + "\n" + fence
 
 
 def _changed(a, b):
